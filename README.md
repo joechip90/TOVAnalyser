@@ -1,2 +1,2 @@
-# TOVAnalyser
-R skript for analyse for terrestrisk naturovervåkning NINA prosjekt
+# Terrestrisk Naturovervåkning Projekt Analyser
+R skript for analyse til terrestrisk naturovervåkning prosjekt
