@@ -1,19 +1,11 @@
----
-title: "Terrestrisk Naturovervåking: Vegetasjonsanalyser"
-author: "Joseph Chipperfield"
-output: rmarkdown::github_document
----
+Terrestrisk Naturovervåking: Vegetasjonsanalyser
+================
+Joseph Chipperfield
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(
-  echo = TRUE,
-  fig.path = "TOVVegAnalyserFigs/"
-)
-```
+Import the Libraries
+--------------------
 
-## Import the Libraries
-
-```{r results="hide", warning=FALSE, error=FALSE, message=FALSE}
+``` r
 library(vegan)       # Include the vegetation analysis library
 library(ggplot2)     # Import graphics libraries
 library(rlang)       # R language object library
@@ -21,9 +13,10 @@ library(openxlsx)    # Import the files for import/export of Excel data
 library(knitr)       # Allow for markdown-formatted tables and figures
 ```
 
-## Import the Data
+Import the Data
+---------------
 
-```{r dataImport}
+``` r
 dataLocation <- "C:/Users/joseph.chipperfield/OneDrive - NINA/Work/TOV/CleanedData.rds"
 TOVData <- readRDS(dataLocation)
 
@@ -34,9 +27,10 @@ if(dir.exists(outputLocation)) {
 dir.create(outputLocation)
 ```
 
-## Initialise Helper Functions
+Initialise Helper Functions
+---------------------------
 
-```{r helperFunctions}
+``` r
 # Function to add together columns that are of the same species
 compressCommunityMatrix <- function(inputMatrix) {
   # Retrieve the species from the column names
@@ -109,9 +103,10 @@ createTrajectoryPlot <- function(ordinationFrame, xName, yName) {
 }
 ```
 
-## Ordination Analysis
+Ordination Analysis
+-------------------
 
-```{r ordinationAnalysis, results="hide", message=FALSE}
+``` r
 # Setup community matrices for the frequency values
 compressedFreq <- compressCommunityMatrix(t(TOVData$freqMatrix))
 # Setup community matrices for the cover values
@@ -145,26 +140,10 @@ freqNMDSOrdinationPlotList <- createTrajectoryPlot(compressedFreq_Ordination, NM
 coverNMDSOrdinationPlotList <- createTrajectoryPlot(compressedCover_Ordination, NMDS1, NMDS2)
 ```
 
-```{r ordinationPlotSave, echo=FALSE, results="hide", warning=FALSE, error=FALSE, message=FALSE}
-# Function to save the ordination plots
-saveOrdinationPlots <- function(curPlotList, outputLocation, siteInfo, suffix) {
-  lapply(X = names(curPlotList), FUN = function(curSiteCode, curPlotList, outputLocation, siteInfo, suffix) {
-    # Retrieve the full size name
-    fullSiteName <- siteInfo[curSiteCode, "SiteName"]
-    # Save the ordination plot as an SVG object
-    ggsave(file = paste(outputLocation, "/", fullSiteName, "_", suffix, ".svg", sep = ""), curPlotList[[curSiteCode]], width = 10, height = 8)
-  }, curPlotList = curPlotList, outputLocation = outputLocation, siteInfo = siteInfo, suffix = suffix)
-}
-# Save each of the ordination plots
-saveOrdinationPlots(freqDCAOrdinationPlotList, outputLocation, TOVData$siteInfo, "_FrekvensDCA")
-saveOrdinationPlots(coverDCAOrdinationPlotList, outputLocation, TOVData$siteInfo, "_DekningDCA")
-saveOrdinationPlots(freqNMDSOrdinationPlotList, outputLocation, TOVData$siteInfo, "_FrekvensNMDS")
-saveOrdinationPlots(coverNMDSOrdinationPlotList, outputLocation, TOVData$siteInfo, "_DekningNMDS")
-```
+Yearly-Pairwise Analysis for Each Species
+=========================================
 
-# Yearly-Pairwise Analysis for Each Species
-
-```{r yearlyRichness, results="asis"}
+``` r
 outWorkbook <- createWorkbook()
 richnessList <- lapply(X = rownames(TOVData$siteInfo), FUN = function(curSiteCode, communityMatrix, siteInfo, sjiktInfo, outWorkbook) {
   # Current site name
@@ -199,12 +178,41 @@ richnessList <- lapply(X = rownames(TOVData$siteInfo), FUN = function(curSiteCod
   print(kable(outTable, format = "markdown", row.names = FALSE, caption = paste("Species richness at", curSiteName, sep = " ")))
   richnessMatrix
 }, communityMatrix = TOVData$freqMatrix, siteInfo = TOVData$siteInfo, sjiktInfo = TOVData$sjiktInfo, outWorkbook = outWorkbook)
+```
+
+**Species richness at Dividalen **
+
+| Sjikt               |  1993|  1998|  2003|  2008|  2013|  2018|
+|:--------------------|-----:|-----:|-----:|-----:|-----:|-----:|
+| Trær                |     0|     0|     0|     0|     0|     0|
+| Busker              |     0|     0|     0|     0|     0|     1|
+| Lyng og dvergbusker |    14|    13|    14|    14|    13|    12|
+| Urter               |    47|    49|    49|    52|    48|    49|
+| Gras og halvgras    |    17|    15|    16|    16|    17|    18|
+| Bladmoser           |    24|    16|    20|    27|    25|    25|
+| Levermoser          |    17|    13|    14|    14|    16|    17|
+| Busklav             |    25|    24|    20|    23|    23|    23|
+
+**Species richness at Gutuila **
+
+| Sjikt               |  1993|  1998|  2003|  2008|  2013|  2018|
+|:--------------------|-----:|-----:|-----:|-----:|-----:|-----:|
+| Trær                |     0|     0|     0|     0|     0|     0|
+| Busker              |     0|     0|     0|     0|     0|     0|
+| Lyng og dvergbusker |    11|    12|    12|    12|    12|    11|
+| Urter               |    17|    19|    21|    20|    20|    18|
+| Gras og halvgras    |    13|    13|    13|    13|    13|    13|
+| Bladmoser           |    18|    18|    19|    18|    23|    21|
+| Levermoser          |    11|    11|    11|    11|    13|    10|
+| Busklav             |    16|    18|    16|    15|    15|    14|
+
+``` r
 names(richnessList) <- rownames(TOVData$siteInfo)
 # Save the created workbook
 saveWorkbook(outWorkbook, paste(outputLocation, "/SpeciesRichness.xlsx", sep = ""), TRUE)
 ```
 
-```{r yearlyPairwise, results="hide"}
+``` r
 # Produce an analysis of changes of frequency/cover in different years
 yearlyPairwiseWilcoxon <- function(communityMatrix) {
   # Retrieve the site codes
@@ -339,4 +347,3 @@ lapply(X = names(compressedFreq_yearlyPairwise), FUN = function(curSiteCode, fre
     unique(speciesInfo[gsub("_[A-Z]$", "", rownames(speciesInfo), perl = TRUE) == curSpecCode, "SpeciesBinomial"])[1]
   }, speciesInfo = TOVData$speciesInfo), colnames(compressedFreq)))
 ```
-

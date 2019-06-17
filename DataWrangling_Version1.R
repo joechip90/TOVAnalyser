@@ -36,6 +36,20 @@ fieldSiteInfo <- as.data.frame(matrix(dimnames = list(NULL, c(
 ), ncol = 2, byrow = TRUE))
 rownames(fieldSiteInfo) <- fieldSiteInfo$SiteCode
 
+# Set the information associated with each vegetation layer
+sjiktInfo <- as.data.frame(matrix(dimnames = list(NULL, c(
+  "SjiktCode", "DescriptionNorsk")), data = c(
+  "A", "Trær",
+  "B", "Busker",
+  "C", "Lyng og dvergbusker",
+  "D", "Urter",
+  "E", "Gras og halvgras",
+  "F", "Bladmoser",
+  "G", "Levermoser",
+  "H", "Busklav"
+), ncol = 2, byrow = TRUE))
+rownames(sjiktInfo) <- sjiktInfo$SjiktCode
+
 # Function that uses an alias list to find the relevant columns of an input data sheet
 aliasColumnLookup <- function(inputSheet, aliasList) {
   outputSheet <- inputSheet[, sapply(X = aliasList, FUN = function(curAlias, inputSheet) {
@@ -104,10 +118,21 @@ plotInfo <- cbind(plotInfo, data.frame(
 rownames(plotInfo) <- plotInfo$PlotCode
 
 # Function to retrieve the matrix values
-getMatrixValues <- function(curElement, sheetName, speciesInfo, plotInfo) {
+getMatrixValues <- function(curElement, sheetName, speciesInfo, plotInfo, fieldCodeAliases) {
   # Retrieve the current frequency/cover sheet
   curSheet <- curElement[[sheetName]]
   sheetSpeciesInfo <- aliasColumnLookup(curSheet, speciesInfoAliases[c("FieldCodeName", "VegLayer")])
+  # Replace the field code with its alias if it is in the list of species with a known alias
+  sheetSpeciesInfo$FieldCodeName <- sapply(X = sheetSpeciesInfo$FieldCodeName, FUN = function(curFieldCode, fieldCodeAliases) {
+    outVal <- curFieldCode
+    hasAlias <- sapply(X = fieldCodeAliases, FUN = function(curAlias, curFieldCode) {
+      curFieldCode %in% curAlias
+    }, curFieldCode = curFieldCode)
+    if(any(hasAlias)) {
+      outVal <- names(fieldCodeAliases)[hasAlias]
+    }
+    outVal
+  }, fieldCodeAliases = fieldCodeAliases)
   # Set row names of the current frequency/cover sheet
   rownames(curSheet) <- paste(gsub(" ", "_", sheetSpeciesInfo$FieldCodeName, fixed = TRUE), sheetSpeciesInfo$VegLayer, sep = "_")
   # Initialise an output matrix
@@ -121,9 +146,9 @@ getMatrixValues <- function(curElement, sheetName, speciesInfo, plotInfo) {
   outMat
 }
 # Calculate the frequency matrix
-freqMatrix <- do.call(`+`, lapply(X = communityMatrixList, FUN = getMatrixValues, sheetName = "frekvensSheet", speciesInfo = speciesInfo, plotInfo = plotInfo))
+freqMatrix <- do.call(`+`, lapply(X = communityMatrixList, FUN = getMatrixValues, sheetName = "frekvensSheet", speciesInfo = speciesInfo, plotInfo = plotInfo, fieldCodeAliases = fieldCodeAliases))
 # Calculate the cover matrix
-coverMatrix <- do.call(`+`, lapply(X = communityMatrixList, FUN = getMatrixValues, sheetName = "dekningSheet", speciesInfo = speciesInfo, plotInfo = plotInfo))
+coverMatrix <- do.call(`+`, lapply(X = communityMatrixList, FUN = getMatrixValues, sheetName = "dekningSheet", speciesInfo = speciesInfo, plotInfo = plotInfo, fieldCodeAliases = fieldCodeAliases))
 
 # Save the community matrices and the plot and species information to the output file
 if(file.exists(outputFile)) {
@@ -133,5 +158,5 @@ saveRDS(list(
   # Save the community matrices
   freqMatrix = freqMatrix, coverMatrix = coverMatrix,
   # Save the information frames
-  siteInfo = fieldSiteInfo, plotInfo = plotInfo, speciesInfo = speciesInfo
+  siteInfo = fieldSiteInfo, plotInfo = plotInfo, speciesInfo = speciesInfo, sjiktInfo = sjiktInfo
 ), file = outputFile)
