@@ -8,9 +8,12 @@ Import the Libraries
 ``` r
 library(vegan)       # Include the vegetation analysis library
 library(ggplot2)     # Import graphics libraries
+library(cowplot)     # Import the library to arrange graphics objects
 library(rlang)       # R language object library
 library(openxlsx)    # Import the files for import/export of Excel data
 library(knitr)       # Allow for markdown-formatted tables and figures
+library(INLA)        # Use INLA for the regression modelling
+library(rjags)       # Library for Bayesian hierarchical modelling
 ```
 
 Import the Data
@@ -25,6 +28,23 @@ if(dir.exists(outputLocation)) {
   unlink(outputLocation, recursive = TRUE)
 }
 dir.create(outputLocation)
+```
+
+    ## Warning in dir.create(outputLocation): 'C:
+    ## \Users\joseph.chipperfield\OneDrive - NINA\Work\TOV\AnalyserOutput' already
+    ## exists
+
+Set Colours to Use
+------------------
+
+``` r
+# Set the colour palette for the different vegetation layers
+TOVData$sjiktInfo <- cbind(TOVData$sjiktInfo, data.frame(
+  Colour = rgb(
+    c(000, 102, 159, 000, 240, 142, 205, 197),
+    c(100, 205, 121, 255, 230, 142, 085, 193),
+    c(000, 000, 238, 127, 140, 056, 085, 170), maxColorValue = 255)
+))
 ```
 
 Initialise Helper Functions
@@ -46,174 +66,7 @@ compressCommunityMatrix <- function(inputMatrix) {
   outputMatrix
 }
 
-# Function to create trajectory plots when using ordination
-createTrajectoryPlot <- function(ordinationFrame, xName, yName) {
-  # Retrieve the expressions in the input arguments
-  xName <- enquo(xName)
-  yName <- enquo(yName)
-  # Retrieve the string version of the input arguments
-  xNameString <- as_label(xName)
-  yNameString <- as_label(yName)
-  # Retrieve the different site codes in the ordination frame
-  siteCodes <- unique(gsub("\\d+[A-Z]*\\-\\d+$", "", rownames(ordinationFrame), perl = TRUE))
-  # Create a trajectory plot for each site
-  trajPlots <- lapply(X = siteCodes, FUN = function(curSite, ordinationFrame, xNames, yNames) {
-    # Subset only the relevant ordination columns at the current site
-    ordinationFrameSubset <- as.data.frame(ordinationFrame[grepl(paste("^", curSite, sep = ""), rownames(ordinationFrame), perl = TRUE), c(xNames$str, yNames$str)])
-    # Get a list of sampled years at the current site
-    sampledYears <- sort(unique(as.integer(gsub("^[A-Z]\\d+[A-Z]*\\-", "", rownames(ordinationFrameSubset), perl = TRUE))))
-    # Initialise a scatter plot of the ordination values
-    outPlot <- ggplot(ordinationFrameSubset, aes(!!(xNames$qu), !!(yNames$qu))) + theme_classic() + geom_point()
-    colnames(ordinationFrameSubset) <- c("ORDX", "ORDY")
-    if(length(sampledYears) > 1) {
-      # If there is more than one sampled year then plot arrows between each set of years
-      # Create a series of data frames for each year transition
-      trajOrdinationFrames <- lapply(X = 1:(length(sampledYears) - 1), FUN = function(yearIter, ordinationFrameSubset, sampledYears) {
-        # Get the year the plots are going from and to
-        fromYear <- sampledYears[yearIter]
-        toYear <- sampledYears[yearIter + 1]
-        # Find those plots that have samples in both years
-        fromPlots <- gsub("\\-\\d+$", "", rownames(ordinationFrameSubset)[grepl(paste(fromYear, "$", sep = ""), rownames(ordinationFrameSubset), perl = TRUE)], perl = TRUE)
-        toPlots <- gsub("\\-\\d+$", "", rownames(ordinationFrameSubset)[grepl(paste(toYear, "$", sep = ""), rownames(ordinationFrameSubset), perl = TRUE)], perl = TRUE)
-        plotsBoth <- c(fromPlots, toPlots)[duplicated(c(fromPlots, toPlots))]
-        # Create a data.frame with the trajectories included
-        outTrajFrame <- as.data.frame(matrix(nrow = 0, ncol = 4, dimnames = list(NULL, c("FROM_ORDX", "TO_ORDX", "FROM_ORDY", "TO_ORDY"))))
-        if(length(plotsBoth) > 0) {
-          outTrajFrame <- data.frame(
-            FROM_ORDX = ordinationFrameSubset[paste(plotsBoth, fromYear, sep = "-"), "ORDX"],
-            TO_ORDX = ordinationFrameSubset[paste(plotsBoth, toYear, sep = "-"), "ORDX"],
-            FROM_ORDY = ordinationFrameSubset[paste(plotsBoth, fromYear, sep = "-"), "ORDY"],
-            TO_ORDY = ordinationFrameSubset[paste(plotsBoth, toYear, sep = "-"), "ORDY"]
-          )
-          rownames(outTrajFrame) <- plotsBoth
-        }
-        outTrajFrame
-      }, ordinationFrameSubset = ordinationFrameSubset, sampledYears = sampledYears)
-      names(trajOrdinationFrames) <- paste(sampledYears[1:(length(sampledYears) - 1)], sampledYears[2:length(sampledYears)], sep = "_")
-      # Add trajectory arrows to the ggplot
-      outPlot <- outPlot + lapply(X = trajOrdinationFrames, FUN = function(curOrdinationFrame) {
-        geom_segment(aes(x = FROM_ORDX, y = FROM_ORDY, xend = TO_ORDX, yend = TO_ORDY), data = curOrdinationFrame, colour = "blue",
-          arrow = arrow(type = "closed", length = unit(0.01, "npc")))
-      })
-    }
-    outPlot
-  }, ordinationFrame = ordinationFrame, xNames = list(qu = xName, str = xNameString), yNames = list(qu = yName, str = yNameString))
-  names(trajPlots) <- siteCodes
-  trajPlots
-}
-```
-
-Ordination Analysis
--------------------
-
-``` r
-# Setup community matrices for the frequency values
-compressedFreq <- compressCommunityMatrix(t(TOVData$freqMatrix))
-# Setup community matrices for the cover values
-compressedCover <- compressCommunityMatrix(t(TOVData$coverMatrix))
-
-# Run DCA on each of the different community matrices
-compressedFreq_DCA <- decorana(compressedFreq)
-compressedCover_DCA <- decorana(compressedCover)
-
-# Run NMDS on each of the different community matrices
-compressedFreq_NMDS <- metaMDS(compressedFreq, try = 50, trymax = 10000)
-compressedCover_NMDS <- metaMDS(compressedCover, try = 50, trymax = 10000)
-
-# Combine the site scores from the different ordination techniques
-compressedFreq_Ordination <- as.data.frame(cbind(scores(compressedFreq_DCA), scores(compressedFreq_NMDS)))
-compressedCover_Ordination <- as.data.frame(cbind(scores(compressedCover_DCA), scores(compressedCover_NMDS)))
-# Save the ordination scores in an excel files
-ordinationBook <- createWorkbook()
-addWorksheet(ordinationBook, "Frekvens")
-addWorksheet(ordinationBook, "Dekning")
-ordHeaderStyle <- createStyle(border = "bottom", borderStyle = "medium", textDecoration = "bold")
-writeDataTable(ordinationBook, "Frekvens", compressedFreq_Ordination, headerStyle = ordHeaderStyle, rowNames = TRUE, firstColumn = TRUE)
-writeDataTable(ordinationBook, "Dekning", compressedCover_Ordination, headerStyle = ordHeaderStyle, rowNames = TRUE, firstColumn = TRUE)
-saveWorkbook(ordinationBook, paste(outputLocation, "OrdinationScores.xlsx", sep = "/"), overwrite = TRUE)
-
-# Create a series of trajectory plots for the DCA scores
-freqDCAOrdinationPlotList <- createTrajectoryPlot(compressedFreq_Ordination, DCA1, DCA2)
-coverDCAOrdinationPlotList <- createTrajectoryPlot(compressedCover_Ordination, DCA1, DCA2)
-# Create a series of trajectory plots for the NMDS scores
-freqNMDSOrdinationPlotList <- createTrajectoryPlot(compressedFreq_Ordination, NMDS1, NMDS2)
-coverNMDSOrdinationPlotList <- createTrajectoryPlot(compressedCover_Ordination, NMDS1, NMDS2)
-```
-
-Yearly-Pairwise Analysis for Each Species
-=========================================
-
-``` r
-outWorkbook <- createWorkbook()
-richnessList <- lapply(X = rownames(TOVData$siteInfo), FUN = function(curSiteCode, communityMatrix, siteInfo, sjiktInfo, outWorkbook) {
-  # Current site name
-  curSiteName <- as.character(siteInfo[curSiteCode, "SiteName"])
-  # Initialise a worksheet for the current site
-  addWorksheet(outWorkbook, curSiteName)
-  # Subset the matrix with the current site code
-  curCommunityMatrix <- communityMatrix[, gsub("\\d+[A-Z]*\\-\\d+$", "", colnames(communityMatrix), perl = TRUE) == curSiteCode]
-  # Create a richness matrix
-  richnessMatrix <- as.data.frame(sapply(X = unique(gsub(paste("^", curSiteCode, "\\d+[A-Z]*\\-", sep = ""), "", colnames(curCommunityMatrix), perl = TRUE)), FUN = function(curYear, curCommunityMatrix, sjiktInfo) {
-    # Filter out the columns that represent samples from the current year
-    curYearCommunity <- curCommunityMatrix[, grepl(paste(curYear, "$", sep = ""), colnames(curCommunityMatrix), perl = TRUE)]
-    # Count the species richness for each sjikt
-    setNames(sapply(X = sjiktInfo$SjiktCode, FUN = function(curSjikt, curYearCommunity) {
-      # Assess whether the species row belong to the current sjikt
-      isSjikt <- grepl(paste(curSjikt, "$", sep = ""), rownames(curYearCommunity), perl = TRUE)
-      outVal <- 0
-      if(any(isSjikt)) {
-        outVal <- sum(ifelse(apply(X = curYearCommunity[isSjikt, , drop = FALSE], FUN = function(curRow) {
-          any(curRow > 0)
-        }, MARGIN = 1), 1, 0))
-      }
-      outVal
-    }, curYearCommunity), sjiktInfo$SjiktCode)
-  }, curCommunityMatrix = curCommunityMatrix, sjiktInfo = sjiktInfo))
-  # Save the table to the workbook
-  formattedTable <- cbind(data.frame(Sjikt = rownames(sjiktInfo)), richnessMatrix)
-  writeDataTable(outWorkbook, curSiteName, formattedTable, colNames = TRUE, rowNames = FALSE)
-  # Display a table
-  outTable <- cbind(data.frame(Sjikt = sjiktInfo[, "DescriptionNorsk"]), as.data.frame(richnessMatrix))
-  cat("**Species richness at", curSiteName, "**\n")
-  print(kable(outTable, format = "markdown", row.names = FALSE, caption = paste("Species richness at", curSiteName, sep = " ")))
-  richnessMatrix
-}, communityMatrix = TOVData$freqMatrix, siteInfo = TOVData$siteInfo, sjiktInfo = TOVData$sjiktInfo, outWorkbook = outWorkbook)
-```
-
-**Species richness at Dividalen **
-
-| Sjikt               |  1993|  1998|  2003|  2008|  2013|  2018|
-|:--------------------|-----:|-----:|-----:|-----:|-----:|-----:|
-| Trær                |     0|     0|     0|     0|     0|     0|
-| Busker              |     0|     0|     0|     0|     0|     1|
-| Lyng og dvergbusker |    14|    13|    14|    14|    13|    12|
-| Urter               |    47|    49|    49|    52|    48|    49|
-| Gras og halvgras    |    17|    15|    16|    16|    17|    18|
-| Bladmoser           |    24|    16|    20|    27|    25|    25|
-| Levermoser          |    17|    13|    14|    14|    16|    17|
-| Busklav             |    25|    24|    20|    23|    23|    23|
-
-**Species richness at Gutuila **
-
-| Sjikt               |  1993|  1998|  2003|  2008|  2013|  2018|
-|:--------------------|-----:|-----:|-----:|-----:|-----:|-----:|
-| Trær                |     0|     0|     0|     0|     0|     0|
-| Busker              |     0|     0|     0|     0|     0|     0|
-| Lyng og dvergbusker |    11|    12|    12|    12|    12|    11|
-| Urter               |    17|    19|    21|    20|    20|    18|
-| Gras og halvgras    |    13|    13|    13|    13|    13|    13|
-| Bladmoser           |    18|    18|    19|    18|    23|    21|
-| Levermoser          |    11|    11|    11|    11|    13|    10|
-| Busklav             |    16|    18|    16|    15|    15|    14|
-
-``` r
-names(richnessList) <- rownames(TOVData$siteInfo)
-# Save the created workbook
-saveWorkbook(outWorkbook, paste(outputLocation, "/SpeciesRichness.xlsx", sep = ""), TRUE)
-```
-
-``` r
-# Produce an analysis of changes of frequency/cover in different years
+# Produce an analysis of changes in frequency/cover/ordination in different years
 yearlyPairwiseWilcoxon <- function(communityMatrix) {
   # Retrieve the site codes
   siteCodes <- sort(unique(gsub("\\d+[A-Z]*\\-\\d+$", "", rownames(communityMatrix), perl = TRUE)))
@@ -254,8 +107,8 @@ yearlyPairwiseWilcoxon <- function(communityMatrix) {
         wilTest <- wilcox.test(values_fromYear, values_toYear, paired = TRUE, exact = FALSE)
         # Produce an output vector with the community data
         setNames(
-          c(median(values_fromYear), median(values_toYear), mean(values_fromYear), mean(values_toYear), wilTest$statistic, wilTest$p.value),
-          c("fromMedian", "toMedian", "fromMean", "toMean", "Vstat", "pValue"))
+          c(sum(ifelse(values_fromYear < values_toYear, 1, 0)), sum(ifelse(values_fromYear > values_toYear, 1, 0)), median(values_fromYear), median(values_toYear), mean(values_fromYear), mean(values_toYear), wilTest$statistic, wilTest$p.value),
+          c("numIncrease", "numDecrease", "fromMedian", "toMedian", "fromMean", "toMean", "Vstat", "pValue"))
       }, curSpecies = curSpecies, communityMatrixSubset = communityMatrixSubset, MARGIN = 1)))
     }, curSite = curSite, communityMatrixSubset = communityMatrixSubset)
     names(outList) <- speciesList
@@ -264,7 +117,303 @@ yearlyPairwiseWilcoxon <- function(communityMatrix) {
   names(outList) <- siteCodes
   outList
 }
-# Run the yearly pairwuse analysis for both the cover and the frequency
+```
+
+Ordination Analysis
+-------------------
+
+``` r
+# Function to create trajectory plots when using ordination
+createTrajectoryPlot <- function(ordinationFrame, xName, yName, speciesFrame, sjiktInfo) {
+  # Retrieve the expressions in the input arguments
+  xName <- enquo(xName)
+  yName <- enquo(yName)
+  # Retrieve the string version of the input arguments
+  xNameString <- as_label(xName)
+  yNameString <- as_label(yName)
+  xNames <- list(qu = xName, str = xNameString)
+  yNames <- list(qu = yName, str = yNameString)
+  # Retrieve the different site codes in the ordination frame
+  siteCodes <- unique(gsub("\\d+[A-Z]*\\-\\d+$", "", rownames(ordinationFrame), perl = TRUE))
+  # Create a trajectory plot for each site
+  trajPlots <- lapply(X = siteCodes, FUN = function(curSite, ordinationFrame, xNames, yNames) {
+    # Subset only the relevant ordination columns at the current site
+    ordinationFrameSubset <- as.data.frame(ordinationFrame[grepl(paste("^", curSite, sep = ""), rownames(ordinationFrame), perl = TRUE), c(xNames$str, yNames$str)])
+    # Get a list of sampled years at the current site
+    sampledYears <- sort(unique(as.integer(gsub("^[A-Z]\\d+[A-Z]*\\-", "", rownames(ordinationFrameSubset), perl = TRUE))))
+    # Find the sample that represents the first sample for each plot
+    firstSample <- sapply(X = unique(gsub("\\-\\d+$", "", rownames(ordinationFrameSubset), perl = TRUE)), FUN = function(curPlot, plotNames) {
+      # Retrieve the years that the plot has been sampled in
+      plotYears <- as.integer(gsub(paste("^", curPlot, "\\-", sep = ""), "", plotNames[grepl(paste("^", curPlot, "\\-", sep = ""), plotNames, perl = TRUE)], perl = TRUE))
+      paste(curPlot, min(plotYears), sep = "-")
+    }, plotNames = rownames(ordinationFrameSubset))
+    # Initialise a scatter plot of the ordination values
+    outPlot <- ggplot(ordinationFrameSubset[firstSample, ], aes(!!(xNames$qu), !!(yNames$qu))) + theme_classic() +
+      xlab(gsub("_.*$", "", xNames$str, perl = TRUE)) + ylab(gsub("_.*$", "", yNames$str, perl = TRUE)) +
+      scale_colour_manual(values = colorRampPalette(rgb(c(191, 0), c(239, 178), c(255, 238), maxColorValue = 255))(length(sampledYears) - 1), name = NULL, labels = paste(sampledYears[1:(length(sampledYears) - 1)], sampledYears[2:length(sampledYears)], sep = "-"))
+    colnames(ordinationFrameSubset) <- c("ORDX", "ORDY")
+    if(length(sampledYears) > 1) {
+      # If there is more than one sampled year then plot arrows between each set of years
+      # Create a series of data frames for each year transition
+      trajOrdinationFrames <- lapply(X = 1:(length(sampledYears) - 1), FUN = function(yearIter, ordinationFrameSubset, sampledYears) {
+        # Get the year the plots are going from and to
+        fromYear <- sampledYears[yearIter]
+        toYear <- sampledYears[yearIter + 1]
+        # Find those plots that have samples in both years
+        fromPlots <- gsub("\\-\\d+$", "", rownames(ordinationFrameSubset)[grepl(paste(fromYear, "$", sep = ""), rownames(ordinationFrameSubset), perl = TRUE)], perl = TRUE)
+        toPlots <- gsub("\\-\\d+$", "", rownames(ordinationFrameSubset)[grepl(paste(toYear, "$", sep = ""), rownames(ordinationFrameSubset), perl = TRUE)], perl = TRUE)
+        plotsBoth <- c(fromPlots, toPlots)[duplicated(c(fromPlots, toPlots))]
+        # Create a data.frame with the trajectories included
+        outTrajFrame <- as.data.frame(matrix(nrow = 0, ncol = 6, dimnames = list(NULL, c("FromYear", "ToYear", "FROM_ORDX", "TO_ORDX", "FROM_ORDY", "TO_ORDY"))))
+        if(length(plotsBoth) > 0) {
+          outTrajFrame <- data.frame(
+            FromYear = factor(rep(fromYear, length(plotsBoth)), levels = sampledYears),
+            ToYear = factor(rep(toYear, length(plotsBoth)), levels = sampledYears),
+            FROM_ORDX = ordinationFrameSubset[paste(plotsBoth, fromYear, sep = "-"), "ORDX"],
+            TO_ORDX = ordinationFrameSubset[paste(plotsBoth, toYear, sep = "-"), "ORDX"],
+            FROM_ORDY = ordinationFrameSubset[paste(plotsBoth, fromYear, sep = "-"), "ORDY"],
+            TO_ORDY = ordinationFrameSubset[paste(plotsBoth, toYear, sep = "-"), "ORDY"]
+          )
+          rownames(outTrajFrame) <- plotsBoth
+        }
+        outTrajFrame
+      }, ordinationFrameSubset = ordinationFrameSubset, sampledYears = sampledYears)
+      names(trajOrdinationFrames) <- paste(sampledYears[1:(length(sampledYears) - 1)], sampledYears[2:length(sampledYears)], sep = "_")
+      # Add trajectory arrows to the ggplot
+      outPlot <- outPlot + lapply(X = trajOrdinationFrames, FUN = function(curOrdinationFrame) {
+        geom_segment(aes(x = FROM_ORDX, y = FROM_ORDY, xend = TO_ORDX, yend = TO_ORDY, colour = FromYear), data = curOrdinationFrame)
+      })
+    }
+    outPlot + geom_point()
+  }, ordinationFrame = ordinationFrame, xNames = xNames, yNames = yNames)
+  names(trajPlots) <- siteCodes
+  # Create a plot of the species in the Ordination plot
+  append(trajPlots, list(
+    Sjikt = ggplot(cbind(speciesFrame, data.frame(
+      Origin = rep(0.0, nrow(speciesFrame)),
+      Sjikt = factor(gsub("^.*\\_", "", rownames(speciesFrame), perl = TRUE), levels = rownames(sjiktInfo))
+    )), aes(!!(xNames$qu), !!(yNames$qu))) +
+      geom_segment(aes(x = Origin, y = Origin, xend = !!(xNames$qu), yend = !!(yNames$qu), colour = Sjikt), arrow = arrow(type = "closed", length = unit(0.01, "npc"))) +
+      theme_classic() + scale_colour_manual(values = as.character(sjiktInfo$Colour), name = NULL, labels = sjiktInfo$DescriptionNorsk) +
+      xlab(gsub("_.*$", "", xNames$str, perl = TRUE)) + ylab(gsub("_.*$", "", yNames$str, perl = TRUE))
+  ))
+}
+# Setup community matrices for the frequency values
+compressedFreq <- compressCommunityMatrix(t(TOVData$freqMatrix))
+# Setup community matrices for the cover values
+compressedCover <- compressCommunityMatrix(t(TOVData$coverMatrix))
+
+# Run DCA on each of the different community matrices
+compressedFreq_DCA <- decorana(compressedFreq)
+compressedCover_DCA <- decorana(compressedCover)
+
+# Run NMDS on each of the different community matrices
+compressedFreq_NMDS <- metaMDS(compressedFreq, try = 50, trymax = 10000)
+compressedCover_NMDS <- metaMDS(compressedCover, try = 50, trymax = 10000)
+
+# Combine the site scores from the different ordination techniques
+compressedFreq_Ordination <- list(
+  plots = as.data.frame(cbind(scores(compressedFreq_DCA), scores(compressedFreq_NMDS))),
+  species = as.data.frame(
+    cbind(scores(compressedFreq_DCA, display = "species"), scores(compressedFreq_NMDS, display = "species"))
+      )[gsub("_[A-Z]+$", "", rownames(TOVData$speciesInfo), perl = TRUE), ]
+)
+names(compressedFreq_Ordination$plots) <- paste(names(compressedFreq_Ordination$plots), "Frekvens", sep = "_")
+names(compressedFreq_Ordination$species) <- paste(names(compressedFreq_Ordination$species), "Frekvens", sep = "_")
+rownames(compressedFreq_Ordination$species) <- rownames(TOVData$speciesInfo)
+compressedCover_Ordination <- list(
+  plots = as.data.frame(cbind(scores(compressedCover_DCA), scores(compressedCover_NMDS))),
+  species = as.data.frame(
+    cbind(scores(compressedCover_DCA, display = "species"), scores(compressedCover_NMDS, display = "species"))
+      )[gsub("_[A-Z]+$", "", rownames(TOVData$speciesInfo), perl = TRUE), ]
+)
+names(compressedCover_Ordination$plots) <- paste(names(compressedCover_Ordination$plots), "Dekning", sep = "_")
+names(compressedCover_Ordination$species) <- paste(names(compressedCover_Ordination$species), "Dekning", sep = "_")
+rownames(compressedCover_Ordination$species) <- rownames(TOVData$speciesInfo)
+# Add the frequency and cover information to the plot information
+TOVData$plotInfo <- cbind(TOVData$plotInfo, compressedFreq_Ordination$plots, compressedCover_Ordination$plots)
+TOVData$speciesInfo <- cbind(TOVData$speciesInfo, compressedFreq_Ordination$species, compressedCover_Ordination$species)
+
+# Function to write the results of the Wilcoxon signed ranks test to an ordination output file
+writeOrdinationYeralyPairwise <- function(yearlyPairwiseList, outWorkbook, sheetName, siteInfo) {
+  # Create a flattened version of the ordination scores
+  flattenedOrdinationFrame <- do.call(rbind, lapply(X = names(yearlyPairwiseList), FUN = function(curSiteCode, yearlyPairwiseList, siteInfo) {
+    # Retrieve the current site name
+    curSiteName <- siteInfo[curSiteCode, "SiteName"]
+    # Retrieve the current ordination list
+    curOrdinationList <- yearlyPairwiseList[[curSiteCode]]
+    outMat <- t(sapply(X = curOrdinationList, FUN = function(curOrdinationScores) {
+      # Flatten out the ordination scores
+      setNames(
+        as.vector(t(as.matrix(curOrdinationScores[, 3:ncol(curOrdinationScores)]))),
+        sapply(X = paste(curOrdinationScores[, 1], curOrdinationScores[, 2], sep = "_"), FUN = paste, colnames(curOrdinationScores)[3:ncol(curOrdinationScores)], sep = "_")
+      )
+    }))
+    rownames(outMat) <- paste(curSiteCode, names(curOrdinationList), sep = "_")
+    as.data.frame(outMat)
+  }, yearlyPairwiseList = yearlyPairwiseList, siteInfo = siteInfo))
+  # Get the vector of year comparrisons
+  uniqueYearComps <- unique(sapply(X = strsplit(colnames(flattenedOrdinationFrame), "_", fixed = TRUE), FUN = function(curSplit) {
+    paste(curSplit[1], curSplit[2], sep = "-")
+  }))
+  # Get the vector of ordination axes
+  uniqueOrdAxes <- unique(sapply(X = strsplit(rownames(flattenedOrdinationFrame), "_", fixed = TRUE), FUN = function(curSplit) {
+    curSplit[2]
+  }))
+  # Make text for the top header
+  topHeadText <- c("Site", "Ordination Axis", unlist(lapply(X = uniqueYearComps, FUN = function(curComp) {
+    c(paste(curComp, "Comparison", sep = " "), rep("", 5))
+  })))
+  dim(topHeadText) <- c(1, length(topHeadText))
+  # Make text for the lower header
+  lowerHeadText <- c("", "", unlist(lapply(X = uniqueYearComps, FUN = function(curComp) {
+    # Get the split years
+    splitCom <- strsplit(curComp, "-", fixed = TRUE)[[1]]
+    c("N Increasing", "N Decreasing", paste("Median (", splitCom, ")", sep = ""), "Wilcoxon's V", "P Value")
+  })))
+  dim(lowerHeadText) <- c(1, length(lowerHeadText))
+  # Make text for the site column
+  siteColumnText <- unlist(lapply(X = as.character(siteInfo[, "SiteName"]), FUN = function(curSiteName, numAxes) {
+    initOut <- rep("", numAxes)
+    initOut[1] <- curSiteName
+    initOut
+  }, numAxes = length(uniqueOrdAxes)))
+  dim(siteColumnText) <- c(length(siteColumnText), 1)
+  # Get the column names of the output that we want
+  outputColNames <- unlist(lapply(X = uniqueYearComps, FUN = function(curComp) {
+    yearFormat <- gsub("-", "_", curComp, fixed = TRUE)
+    paste(yearFormat, c("numIncrease", "numDecrease", "fromMedian", "toMedian", "Vstat", "pValue"), sep = "_")
+  }))
+  # Write the elements of the worksheet
+  writeData(outWorkbook, sheetName, topHeadText, rowNames = FALSE, colNames = FALSE, startCol = 1, startRow = 1)
+  writeData(outWorkbook, sheetName, lowerHeadText, rowNames = FALSE, colNames = FALSE, startCol = 1, startRow = 2)
+  writeData(outWorkbook, sheetName, siteColumnText, rowNames = FALSE, colNames = FALSE, startCol = 1, startRow = 3)
+  writeData(outWorkbook, sheetName, cbind(data.frame(
+      OrdinationAxis = rep(uniqueOrdAxes, nrow(siteInfo))
+    ),
+    flattenedOrdinationFrame[, outputColNames]), rowNames = FALSE, colNames = FALSE, startCol = 2, startRow = 3)
+  # Add styles for the column headers
+  topHeadStyle <- createStyle(textDecoration = "bold")
+  lowerHeadStyle <- createStyle(border = "bottom", borderStyle = "medium")
+  addStyle(outWorkbook, sheetName, style = topHeadStyle, rows = 1, cols = 1:length(topHeadText))
+  addStyle(outWorkbook, sheetName, style = lowerHeadStyle, rows = 2, cols = 1:length(topHeadText))
+  # Merge the cells of the top header
+  lapply(X = 1:length(uniqueYearComps), FUN = function(curNum, outWorkbook, sheetName, repRange) {
+    mergeCells(outWorkbook, sheetName, cols = ((curNum - 1) * repRange):(curNum * repRange - 1) + 3, rows = 1)
+  }, outWorkbook = outWorkbook, sheetName = sheetName, repRange = 6)
+  # Merge the cells of the first row
+  lapply(X = 1:nrow(siteInfo), FUN = function(curNum, outWorkbook, sheetName, repRange) {
+    mergeCells(outWorkbook, sheetName, cols = 1, rows = ((curNum - 1) * repRange):(curNum * repRange - 1) + 3)
+  }, outWorkbook = outWorkbook, sheetName = sheetName, repRange = length(uniqueOrdAxes))
+  outWorkbook
+}
+
+# Calculate yearly pairwise estimates of changes in the ordination axes
+ordinationFreq_yearlyPairwise <- yearlyPairwiseWilcoxon(compressedFreq_Ordination$plots)
+ordinationCover_yearlyPairwise <- yearlyPairwiseWilcoxon(compressedCover_Ordination$plots)
+
+# Save the ordination scores in Excel files
+ordinationBook <- createWorkbook()
+addWorksheet(ordinationBook, "Jordstykker_Frekvens")
+addWorksheet(ordinationBook, "Jordstykker_Dekning")
+addWorksheet(ordinationBook, "Arter_Frekvens")
+addWorksheet(ordinationBook, "Arter_Dekning")
+addWorksheet(ordinationBook, "Årlig_Frekvens")
+addWorksheet(ordinationBook, "Årlig_Dekning")
+ordHeaderStyle <- createStyle(border = "bottom", borderStyle = "medium", textDecoration = "bold")
+writeDataTable(ordinationBook, "Jordstykker_Frekvens", compressedFreq_Ordination$plots, headerStyle = ordHeaderStyle, rowNames = TRUE, firstColumn = TRUE)
+writeDataTable(ordinationBook, "Jordstykker_Dekning", compressedCover_Ordination$plots, headerStyle = ordHeaderStyle, rowNames = TRUE, firstColumn = TRUE)
+writeDataTable(ordinationBook, "Arter_Frekvens", compressedFreq_Ordination$species, headerStyle = ordHeaderStyle, rowNames = TRUE, firstColumn = TRUE)
+writeDataTable(ordinationBook, "Arter_Dekning", compressedCover_Ordination$species, headerStyle = ordHeaderStyle, rowNames = TRUE, firstColumn = TRUE)
+writeOrdinationYeralyPairwise(ordinationFreq_yearlyPairwise, ordinationBook, "Årlig_Frekvens", TOVData$siteInfo)
+writeOrdinationYeralyPairwise(ordinationCover_yearlyPairwise, ordinationBook, "Årlig_Dekning", TOVData$siteInfo)
+saveWorkbook(ordinationBook, paste(outputLocation, "OrdinationScores.xlsx", sep = "/"), overwrite = TRUE)
+
+# Create a series of trajectory plots for the DCA scores
+freqDCAOrdinationPlotList <- createTrajectoryPlot(compressedFreq_Ordination$plots, DCA1_Frekvens, DCA2_Frekvens, compressedFreq_Ordination$species, TOVData$sjiktInfo)
+coverDCAOrdinationPlotList <- createTrajectoryPlot(compressedCover_Ordination$plots, DCA1_Dekning, DCA2_Dekning, compressedCover_Ordination$species, TOVData$sjiktInfo)
+# Create a series of trajectory plots for the NMDS scores
+freqNMDSOrdinationPlotList <- createTrajectoryPlot(compressedFreq_Ordination$plots, NMDS1_Frekvens, NMDS2_Frekvens, compressedFreq_Ordination$species, TOVData$sjiktInfo)
+coverNMDSOrdinationPlotList <- createTrajectoryPlot(compressedCover_Ordination$plots, NMDS1_Dekning, NMDS2_Dekning, compressedCover_Ordination$species, TOVData$sjiktInfo)
+```
+
+Compositinal Analysis
+---------------------
+
+Yearly-Pairwise Analysis for Each Species
+-----------------------------------------
+
+``` r
+outWorkbook <- createWorkbook()
+richnessList <- lapply(X = rownames(TOVData$siteInfo), FUN = function(curSiteCode, communityMatrix, siteInfo, sjiktInfo, outWorkbook) {
+  # Current site name
+  curSiteName <- as.character(siteInfo[curSiteCode, "SiteName"])
+  # Initialise a worksheet for the current site
+  addWorksheet(outWorkbook, curSiteName)
+  # Subset the matrix with the current site code
+  curCommunityMatrix <- communityMatrix[, gsub("\\d+[A-Z]*\\-\\d+$", "", colnames(communityMatrix), perl = TRUE) == curSiteCode]
+  # Create a richness matrix
+  richnessMatrix <- as.data.frame(sapply(X = unique(gsub(paste("^", curSiteCode, "\\d+[A-Z]*\\-", sep = ""), "", colnames(curCommunityMatrix), perl = TRUE)), FUN = function(curYear, curCommunityMatrix, sjiktInfo) {
+    # Filter out the columns that represent samples from the current year
+    curYearCommunity <- curCommunityMatrix[, grepl(paste(curYear, "$", sep = ""), colnames(curCommunityMatrix), perl = TRUE)]
+    # Count the species richness for each sjikt
+    setNames(sapply(X = sjiktInfo$SjiktCode, FUN = function(curSjikt, curYearCommunity) {
+      # Assess whether the species row belong to the current sjikt
+      isSjikt <- grepl(paste(curSjikt, "$", sep = ""), rownames(curYearCommunity), perl = TRUE)
+      outVal <- 0
+      if(any(isSjikt)) {
+        outVal <- sum(ifelse(apply(X = curYearCommunity[isSjikt, , drop = FALSE], FUN = function(curRow) {
+          any(curRow > 0)
+        }, MARGIN = 1), 1, 0))
+      }
+      outVal
+    }, curYearCommunity), sjiktInfo$SjiktCode)
+  }, curCommunityMatrix = curCommunityMatrix, sjiktInfo = sjiktInfo))
+  # Save the table to the workbook
+  formattedTable <- cbind(data.frame(Sjikt = rownames(sjiktInfo)), richnessMatrix)
+  writeDataTable(outWorkbook, curSiteName, formattedTable, colNames = TRUE, rowNames = FALSE)
+  # Display a table
+  outTable <- cbind(data.frame(Sjikt = sjiktInfo[, "DescriptionNorsk"]), as.data.frame(richnessMatrix))
+  cat("**Species richness at ", curSiteName, "**\n", sep = "")
+  print(kable(outTable, format = "markdown", row.names = FALSE, caption = paste("Species richness at", curSiteName, sep = " ")))
+  richnessMatrix
+}, communityMatrix = TOVData$freqMatrix, siteInfo = TOVData$siteInfo, sjiktInfo = TOVData$sjiktInfo, outWorkbook = outWorkbook)
+```
+
+**Species richness at Dividalen**
+
+| Sjikt               |  1993|  1998|  2003|  2008|  2013|  2018|
+|:--------------------|-----:|-----:|-----:|-----:|-----:|-----:|
+| Trær                |     0|     0|     0|     0|     0|     0|
+| Busker              |     0|     0|     0|     0|     0|     1|
+| Lyng og dvergbusker |    14|    13|    14|    14|    13|    12|
+| Urter               |    47|    49|    49|    52|    48|    49|
+| Gras og halvgras    |    17|    15|    16|    16|    17|    18|
+| Bladmoser           |    24|    16|    20|    27|    25|    25|
+| Levermoser          |    17|    13|    14|    14|    16|    17|
+| Busklav             |    25|    24|    20|    23|    23|    23|
+
+**Species richness at Gutulia**
+
+| Sjikt               |  1993|  1998|  2003|  2008|  2013|  2018|
+|:--------------------|-----:|-----:|-----:|-----:|-----:|-----:|
+| Trær                |     0|     0|     0|     0|     0|     0|
+| Busker              |     0|     0|     0|     0|     0|     0|
+| Lyng og dvergbusker |    11|    12|    12|    12|    12|    11|
+| Urter               |    17|    19|    21|    20|    20|    18|
+| Gras og halvgras    |    13|    13|    13|    13|    13|    13|
+| Bladmoser           |    18|    18|    19|    18|    23|    21|
+| Levermoser          |    11|    11|    11|    11|    13|    10|
+| Busklav             |    16|    18|    16|    15|    15|    14|
+
+``` r
+names(richnessList) <- rownames(TOVData$siteInfo)
+# Save the created workbook
+saveWorkbook(outWorkbook, paste(outputLocation, "/SpeciesRichness.xlsx", sep = ""), TRUE)
+```
+
+``` r
+# Run the yearly pairwise analysis for both the cover and the frequency
 compressedFreq_yearlyPairwise <- yearlyPairwiseWilcoxon(compressedFreq)
 compressedCover_yearlyPairwise <- yearlyPairwiseWilcoxon(compressedCover)
 # Create a set of Excel files containing the pairwise analyses
@@ -280,7 +429,7 @@ lapply(X = names(compressedFreq_yearlyPairwise), FUN = function(curSiteCode, fre
   rearrangePairwiseYears <- function(curSpeciesList) {
     outFrame <- t(sapply(X = curSpeciesList, FUN = function(curYearAnalysis) {
       # Flatten out the input matrix
-      setNames(as.double(t(curYearAnalysis[, 3:8])), unlist(lapply(X = paste(curYearAnalysis[, 1], curYearAnalysis[, 2], sep = "-"), FUN = function(curYearText, addColumnHeads) {
+      setNames(as.double(t(curYearAnalysis[, c("fromMedian", "toMedian", "fromMean", "toMean", "Vstat", "pValue")])), unlist(lapply(X = paste(curYearAnalysis[, 1], curYearAnalysis[, 2], sep = "-"), FUN = function(curYearText, addColumnHeads) {
         paste(curYearText, addColumnHeads, sep = "_")
       }, addColumnHeads = c("fromMedian", "toMedian", "fromMean", "toMean", "Vstat", "pValue"))))
     }))
@@ -346,4 +495,172 @@ lapply(X = names(compressedFreq_yearlyPairwise), FUN = function(curSiteCode, fre
   speciesInfo = setNames(sapply(X = colnames(compressedFreq), FUN = function(curSpecCode, speciesInfo) {
     unique(speciesInfo[gsub("_[A-Z]$", "", rownames(speciesInfo), perl = TRUE) == curSpecCode, "SpeciesBinomial"])[1]
   }, speciesInfo = TOVData$speciesInfo), colnames(compressedFreq)))
+```
+
+Ellenberg Indicator Value Analysis
+----------------------------------
+
+``` r
+# Ellenberg column names to use in the analysis
+ellenbergColNames <- c("L", "F", "R", "N")
+ellenbergDescriptionNorsk <- setNames(c("Lys", "Fuktighet", "Reaksjon (baserikhet)", "Nitrogen"), ellenbergColNames)
+attr(ellenbergDescriptionNorsk, "dispColours") <- rgb(c(255, 176, 255, 180), c(250, 226, 192, 238), c(205, 255, 203, 180), maxColorValue = 255)
+# Set the maximum and minimum values of the Ellenberg indicator values
+attr(ellenbergDescriptionNorsk, "range") <- matrix(c(
+  1, 1, 1, 1,
+  9, 12, 9, 9
+), nrow = 2, byrow = TRUE, dimnames = list(c("min", "max"), ellenbergColNames))
+# Open a workbook for the Ellenberg analysis
+ellenbergWorkbook <- createWorkbook()
+# Create an Excel sheet of the species Ellenberg values
+addWorksheet(ellenbergWorkbook, "Species")
+writeDataTable(ellenbergWorkbook, "Species", TOVData$speciesInfo, rowNames = TRUE)
+# Create frequency and cover weighted mean of each of the Ellenberg values for each plot
+addWorksheet(ellenbergWorkbook, "PlotsFrek")
+addWorksheet(ellenbergWorkbook, "PlotsDekning")
+# Calculate the Ellenberg values for a plot
+calcPlotEllenberg <- function(curPlotCommunity, ellenbergSpeciesMatrix) {
+  # Calculate a matrix of plot Ellenberg values
+  plotEllenbergMat <- apply(X = ellenbergSpeciesMatrix, FUN = function(curEllenbergVals, curPlotCommunity) {
+    totalVal <- sum(curPlotCommunity, na.rm = TRUE)
+    ellenVal <- sum(curEllenbergVals * curPlotCommunity, na.rm = TRUE)
+    hasDataVal <- sum(ifelse(is.na(curEllenbergVals), 0, 1) * curPlotCommunity, na.rm = TRUE)
+    setNames(c(ellenVal, hasDataVal) / totalVal, c("Val", "PropData"))
+  }, curPlotCommunity = curPlotCommunity, MARGIN = 2)
+  # Rearrange the outputs
+  setNames(c(plotEllenbergMat[1, ], plotEllenbergMat[2, ]), c(colnames(ellenbergSpeciesMatrix), paste(colnames(ellenbergSpeciesMatrix), "PropData", sep = "")))
+}
+# Calculate the Ellenberg value for each plot (using both frequency and cover)
+freqEllenbergValues <- t(apply(X = TOVData$freqMatrix, FUN = calcPlotEllenberg, ellenbergSpeciesMatrix = as.matrix(TOVData$speciesInfo[, ellenbergColNames]), MARGIN = 2))
+coverEllenbergValues <- t(apply(X = TOVData$coverMatrix, FUN = calcPlotEllenberg, ellenbergSpeciesMatrix = as.matrix(TOVData$speciesInfo[, ellenbergColNames]), MARGIN = 2))
+writeDataTable(ellenbergWorkbook, "PlotsFrek", as.data.frame(freqEllenbergValues), rowNames = TRUE)
+writeDataTable(ellenbergWorkbook, "PlotsDekning", as.data.frame(coverEllenbergValues), rowNames = TRUE)
+# Include all the Ellenberg information available in the input data
+addWorksheet(ellenbergWorkbook, "AllValues")
+writeDataTable(ellenbergWorkbook, "AllValues", TOVData$ellenbergData)
+saveWorkbook(ellenbergWorkbook, paste(outputLocation, "/EllenbergValues.xlsx", sep = ""), overwrite = TRUE)
+
+# Function to fit a linear regression model to the Ellenberg data
+fitEllenbergModel <- function(curEllenbergVal, ellenbergFrame, ellenbergInfo) {
+   # Make a data frame to conduct the Ellenberg model analysis on
+   modelFrame <- data.frame(
+     # Retrieve the plot information from the ID code
+     site = factor(gsub("\\d+[A-Z]*\\-\\d+$", "", rownames(ellenbergFrame), perl = TRUE)),
+     plot = factor(gsub("\\-\\d+$", "", rownames(ellenbergFrame), perl = TRUE)),
+     year = as.double(gsub("^[A-Z]\\d+[A-Z]*\\-", "", rownames(ellenbergFrame), perl = TRUE)),
+     # Get the current Ellenberg value (correcting for the minimum and maximum values of the Ellenberg indicator)
+     ellenbergValue = (ellenbergFrame[, curEllenbergVal] - attr(ellenbergInfo, "range")["min", curEllenbergVal]) / diff(attr(ellenbergDescriptionNorsk, "range")[, curEllenbergVal])
+   )
+   rownames(modelFrame) <- rownames(ellenbergFrame)
+   # Create a series of linear combinations to monitor the overall effect of Year at each site
+   monitorLinCombs <- do.call(c, lapply(X = levels(modelFrame$site), FUN = function(curSite, modelNames) {
+     interactionCoeffName <- paste("site", curSite, ":year", sep = "")
+     monitorVec <- setNames(1, "year")
+     if(interactionCoeffName %in% modelNames) {
+       monitorVec <- c(monitorVec, setNames(1, interactionCoeffName))
+     }
+     outVal <- do.call(inla.make.lincomb, as.list(monitorVec))
+     names(outVal) <- curSite
+     outVal
+   }, modelNames = colnames(model.matrix(ellenbergValue ~ site * year, data = modelFrame))))
+   # Run INLA on the Ellenberg data
+   inla(ellenbergValue ~ site * year + f(plot, model = "iid"), data = modelFrame, family = "beta", control.predictor = list(compute = TRUE), lincomb = monitorLinCombs)
+}
+# Fit the INLA regression model for the frequency and cover data
+freqEllenbergModels <- lapply(X = names(ellenbergDescriptionNorsk), FUN = fitEllenbergModel, ellenbergFrame = freqEllenbergValues, ellenbergInfo = ellenbergDescriptionNorsk)
+names(freqEllenbergModels) <- names(ellenbergDescriptionNorsk)
+coverEllenbergModels <- lapply(X = names(ellenbergDescriptionNorsk), FUN = fitEllenbergModel, ellenbergFrame = coverEllenbergValues, ellenbergInfo = ellenbergDescriptionNorsk)
+names(coverEllenbergModels) <- names(ellenbergDescriptionNorsk)
+```
+
+``` r
+# Function to make plots of the Ellenberg values calculated at each plot
+makeEllenbergPlotList <- function(curSiteInfo, ellenbergValues, ellenbergDescription, outputLocation, fileSuffix, modelList) {
+  # Retrieve the current site name and site code
+  curSiteName <- curSiteInfo[1]
+  curSiteCode <- curSiteInfo[2]
+  # Retrieve information about each plot
+  retPlotInfo <- data.frame(
+    siteCode = gsub("\\d+[A-Z]*\\-\\d+$", "", rownames(ellenbergValues), perl = TRUE),
+    plotID = gsub("^[A-Z]", "", gsub("\\-\\d+$", "", rownames(ellenbergValues), perl = TRUE), perl = TRUE),
+    year = as.integer(gsub("^[A-Z]\\d+[A-Z]*\\-", "", rownames(ellenbergValues), perl = TRUE))
+  )
+  rownames(retPlotInfo) <- rownames(ellenbergValues)
+  # Reorder the Ellenberg values
+  rowsToUse <- as.character(retPlotInfo$siteCode) == curSiteCode
+  reorderedEllenberg <- do.call(rbind, lapply(X = names(ellenbergDescription), FUN = function(curEllenberg, retPlotInfo, ellenbergValues) {
+    outFrame <- cbind(retPlotInfo, data.frame(
+      ellenbergType = rep(curEllenberg, nrow(retPlotInfo)),
+      ellenbergValue = ellenbergValues[, curEllenberg]
+    ))
+    rownames(outFrame) <- paste(rownames(retPlotInfo), curEllenberg, sep = "_")
+    outFrame
+  }, retPlotInfo = retPlotInfo[rowsToUse, ],
+    ellenbergValues = ellenbergValues[rowsToUse, ]))
+  # Ensure that the Ellenberg type variable and year are stored as factors
+  reorderedEllenberg$ellenbergType <- factor(reorderedEllenberg$ellenbergType, levels = names(ellenbergDescription), labels = ellenbergDescription)
+  reorderedEllenberg$year <- factor(reorderedEllenberg$year, levels = sort(unique(reorderedEllenberg$year)))
+  # Create a data frame of the model outputs
+  modelOutputs <- do.call(rbind, lapply(X = names(ellenbergDescription), FUN = function(curEllenberg, retPlotInfo, modelList, ellenbergDescription, rowsToUse) {
+    # Retrieve the model outputs
+    modelOutputs <- as.matrix(modelList[[curEllenberg]]$summary.fitted.values[rowsToUse, c("mean", "0.025quant", "0.5quant", "0.975quant")])
+    # Rescale them to the appropriate Ellenberg scale
+    modelOutputs <- attr(ellenbergDescription, "range")["min", curEllenberg] + diff(attr(ellenbergDescription, "range")[, curEllenberg]) * modelOutputs
+    colnames(modelOutputs) <- c("ellModMean", "ellModLowerCred", "ellModMedian", "ellModUpperCred")
+    modelOutputs
+  }, retPlotInfo = retPlotInfo, modelList = modelList, ellenbergDescription = ellenbergDescription, rowsToUse = rowsToUse))
+  # Attach the model outputs to the Ellenberg reorder frame
+  reorderedEllenberg <- cbind(reorderedEllenberg, modelOutputs)
+  lowCred <- function(yin) {quantile(yin, probs = 0.025, names = FALSE)}
+  uppCred <- function(yin) {quantile(yin, probs = 0.975, names = FALSE)}
+  # Create a violin plot of the Ellenberg values
+  violinPlot <- ggplot(reorderedEllenberg, aes(year, ellenbergValue, fill = ellenbergType)) +
+    geom_violin() + stat_summary(aes(y = ellModMean), fun.ymax = uppCred, fun.ymin = lowCred, geom = "ribbon", alpha = 0.2, fill = "grey", group = 1) +
+    stat_summary(aes(y = ellModMean), fun.y = mean, geom = "line", linetype = "longdash", group = 1) + stat_summary(fun.y = mean, geom = "point", size = 4, colour = "black") +
+    facet_grid(ellenbergType ~ ., scales = "free_y") + theme_classic() + theme(legend.position = "none") +
+    xlab("År") + ylab("Ellenberg Indikator Verdi") + scale_fill_manual(values = attr(ellenbergDescription, "dispColours"))
+  # Create a marginal year effect data frame
+  yearEffectFrame <- do.call(rbind, lapply(X = names(ellenbergDescription), FUN = function(curEllenberg, modelList, curSiteCode, ellenbergDescription) {
+    # Retrieve the marginal density estimate for the derived yearly effect parameter
+    marginalFrame <- modelList[[curEllenberg]]$marginals.lincomb.derived[[curSiteCode]]
+    # Retrieve the rescaled credible interval
+    credInt <- as.double(diff(attr(ellenbergDescription, "range")[, curEllenberg]) * modelList[[curEllenberg]]$summary.lincomb.derived[curSiteCode, c("0.025quant", "0.975quant")])
+    # Create a data frame output of the marginal densities
+    outFrame <- data.frame(
+      # Rescale the Ellenberg values
+      ellenbergValue = marginalFrame[, "x"] * diff(attr(ellenbergDescription, "range")[, curEllenberg]),
+      # Add the other Ellenberg information
+      density = marginalFrame[, "y"],
+      ellenbergType = factor(rep(curEllenberg, nrow(marginalFrame)), levels = names(ellenbergDescription), labels = ellenbergDescription)
+    )
+    # Add a column to help for the display of the Ellenberg credible interval
+    outFrame <- cbind(outFrame, data.frame(
+      ellenbergCredInt = ifelse(outFrame$ellenbergValue >= credInt[1] & outFrame$ellenbergValue <= credInt[2], outFrame$ellenbergValue, NA)
+    ))
+    outFrame
+  }, modelList = modelList, curSiteCode = curSiteCode, ellenbergDescription = ellenbergDescription))
+  # Create a plot to generate the credible interval
+  intervalPlot <- ggplot(yearEffectFrame, aes(ellenbergValue, density)) +
+    geom_ribbon(aes(x = ellenbergCredInt, ymax = density, fill = ellenbergType), ymin = 0) + geom_line(group = 1) +
+    geom_vline(xintercept = 0.0, linetype = "longdash") +
+    facet_grid(ellenbergType ~ ., scales = "free_y") + theme_classic() + theme(legend.position = "none") +
+    xlab("Estimert Årlig Endring i Ellenberg Indikator Verdi") + ylab("Tetthet") + scale_fill_manual(values = attr(ellenbergDescription, "dispColours")) +
+    scale_x_continuous(limits = range(yearEffectFrame$ellenbergCredInt, na.rm = TRUE) + 0.1 * c(-1.0, 1.0) * diff(range(yearEffectFrame$ellenbergCredInt, na.rm = TRUE)))
+  # Combine the plots into one aligned plot
+  combinedPlot <- ggdraw() +
+    draw_plot(violinPlot, x = 0.0, y = 0.0, height = 1.0, width = 0.6) +
+    draw_plot(intervalPlot, x = 0.6, y = 0.0, height = 1.0, width = 0.4)
+  # Save the outputs as SVG files
+  ggsave(paste(outputLocation, "/", curSiteName, fileSuffix, "Ellenberg.svg", sep = ""), violinPlot, width = 10, height = 12)
+  ggsave(paste(outputLocation, "/", curSiteName, fileSuffix, "EllenbergÅrligEndring.svg", sep = ""), intervalPlot, width = 5, height = 12)
+  ggsave(paste(outputLocation, "/", curSiteName, fileSuffix, "EllenbergAlle.svg", sep = ""), combinedPlot, width = 15, height = 12)
+  # Create a list of output plots
+  list(
+    violinPlot = violinPlot,
+    annualChangePlot = intervalPlot,
+    combinedPlot = combinedPlot)
+}
+# Plot the Ellenberg values for both the frequency and cover values
+freqEllenbergPlotList <- apply(X = as.matrix(TOVData$siteInfo), FUN = makeEllenbergPlotList, MARGIN = 1, ellenbergValues = freqEllenbergValues, ellenbergDescription = ellenbergDescriptionNorsk, outputLocation = outputLocation, fileSuffix = "_Frekvens", modelList = freqEllenbergModels)
+coverEllenbergPlotList <- apply(X = as.matrix(TOVData$siteInfo), FUN = makeEllenbergPlotList, MARGIN = 1, ellenbergValues = coverEllenbergValues, ellenbergDescription = ellenbergDescriptionNorsk, outputLocation = outputLocation, fileSuffix = "_Dekning", modelList = coverEllenbergModels)
 ```
