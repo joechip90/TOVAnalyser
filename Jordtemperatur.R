@@ -1,8 +1,16 @@
-options(java.parameters = "-Xmx2048m")
+options(java.parameters = "-Xmx8192m")
 library(XLConnect)       # Import the files for import/export of Excel data
 
 # The file that forms the basis of the soil temperature
 baseFile <- "R:/Prosjekter/15450000 - TOV-vegetasjon/Jordtemperatur - loggere"
+# The location to store the output
+outFolder <- "C:/Users/joseph.chipperfield/OneDrive - NINA/Work/TOV/AnalyserOutput"
+# Location of the Excel template file
+templateFile <- "C:/Users/joseph.chipperfield/OneDrive - NINA/Work/TOV/AnalysisTemplates/JordTemperatur.xlsx"
+
+# allTimeSeries <- readRDS("C:/CloudStorage/Work/TOV/AnalyserOutput/JordTemperatur.rds")
+# templateFile <- "C:/CloudStorage/Work/TOV/AnalysisTemplates/JordTemperatur.xlsx"
+# outFolder <- "C:/CloudStorage/Work/TOV/AnalyserOutput"
 
 # Set a list of site names with possible alises in the dataset (for example: "Dividal" often appears as "Dividalen")
 siteAliases <- list(
@@ -67,6 +75,12 @@ allTimeSeries <- do.call(rbind, lapply(X = dataDirs, FUN = function(curDataDir, 
         plotNumber = rep(curPlotNumber, nrow(rawLoggerRecords)),
         sampleDesignation = rep(curLoggerNumber, nrow(rawLoggerRecords)),
         loggerID = rep(curLoggerID, nrow(rawLoggerRecords)),
+        timeSeriesID = paste(
+          # Create a time series ID for eact plot being monitored
+          rep(curSite, nrow(rawLoggerRecords)),
+          rep(curPlotNumber, nrow(rawLoggerRecords)),
+          rep(curLoggerNumber, nrow(rawLoggerRecords))
+        ),
         downloadTimeStamp = rep(curDownloadTime, nrow(rawLoggerRecords)),
         implantationYear = rep(curYearRange[1], nrow(rawLoggerRecords)),
         removalYear = rep(curYearRange[2], nrow(rawLoggerRecords)),
@@ -80,3 +94,28 @@ allTimeSeries <- do.call(rbind, lapply(X = dataDirs, FUN = function(curDataDir, 
     outFrame
   }, curSite, curYearRange, curAlleFile))
 }, siteAliases = siteAliases))
+# Store the serialised data as a temporary measure
+saveRDS(allTimeSeries, file = paste(outFolder, "JordTemperatur.rds", sep = "/"))
+
+# Start here if you don't want to repeat the data input and processing
+allTimeSeries <- readRDS(paste(outFolder, "JordTemperatur.rds", sep = "/"))
+
+# Load the Excel template format file
+outWorkbook <- loadWorkbook(templateFile)
+# Create a data format for the POSIX-formatted time stamp (because Excel doens't understand them for some stupid reason)
+timeStampStyle <- createCellStyle(outWorkbook, name = "POSIXTimeStamp")
+setDataFormat(timeStampStyle, "dd.mm.yyyy hh:mm:ss")
+# Create a sheet to hold the soil temperature outputs
+createSheet(outWorkbook, name = "JordTemperatur")
+writeWorksheet(outWorkbook, data = allTimeSeries, sheet = "JordTemperatur")
+# Apply the timestamp formatting
+setCellStyle(outWorkbook, sheet = "JordTemperatur", cellstyle = timeStampStyle, col = c(rep(1, nrow(allTimeSeries)), rep(9, nrow(allTimeSeries))), row = c(1:nrow(allTimeSeries), 1:nrow(allTimeSeries)) + 1)
+# Set the named regions
+createName(outWorkbook, "timeValues", formula = paste("JordTemperatur!A2:A", nrow(allTimeSeries) + 1, sep = ""))
+createName(outWorkbook, "tempValues", formula = paste("JordTemperatur!B2:B", nrow(allTimeSeries) + 1, sep = ""))
+createName(outWorkbook, "siteValues", formula = paste("JordTemperatur!D2:D", nrow(allTimeSeries) + 1, sep = ""))
+createName(outWorkbook, "plotID", formula = paste("JordTemperatur!E2:E", nrow(allTimeSeries) + 1, sep = ""))
+createName(outWorkbook, "sampleID", formula = paste("JordTemperatur!F2:F", nrow(allTimeSeries) + 1, sep = ""))
+createName(outWorkbook, "timeSeriesID", formula = paste("JordTemperatur!G2:G", nrow(allTimeSeries) + 1, sep = ""))
+
+saveWorkbook(outWorkbook, file = paste(outFolder, "JordTemperatur.xlsx", sep = "/"))
