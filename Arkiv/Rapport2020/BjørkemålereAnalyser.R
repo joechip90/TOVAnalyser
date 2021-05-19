@@ -1,18 +1,27 @@
 library(RODBC)
 library(openxlsx)
 library(ggplot2)
+library(ggpubr)
 library(reshape2)
+library(extrafont)
+if(!any(names(windowsFonts()) == "Calibri")) {
+  # Import the Calibri font if it is not installed on the system
+  font_import(prompt = FALSE)
+  loadfonts(device = "win")
+}
 
 # ------ 1. SET REPORT GENERATION CRITERIA ------
 # Sites to produce analyses for.  Is a list with names elements, one for each site. Each element is a character vector containing site codes
 # used for the site in the TOV database (some sites may have multiple synonyms)
 sitesToProcess <- list(
-  "Børgefjell" = c("B"),
   "Dividal" = c("D"),
+  "Børgefjell" = c("B"),
+  "Åmotsdal" = c("Å"),
   "Gutulia" = c("G"),
-  "Møsvatn" = c("M"),
-  "Åmotsdal" = c("Å")
+  "Møsvatn" = c("M")
 )
+# Names to convert for figures
+namesToChange <- setNames(c("Åmotsdal", "Dividal"), c("Åmotsdalen", "Dividalen"))
 # Years to produce analyses for (including years you wish to generate time series of species for)
 yearsToProcess <- c(2014, 2015, 2016, 2017, 2018, 2019, 2020)
 # This source file relies on the setting of the "WORKSPACE_TOV" variable in the .Renviron file.  This variable should contain the
@@ -74,19 +83,58 @@ lapply(X = names(sitesToProcess), FUN = function(curSite, stationInfo, plotLoc, 
     curAgg,
     id.vars = c("Year"), measure.vars = c("MeanEpirrita", "MeanOperophtera", "MeanUnknown"), variable.name = "Species")
   popPlotFrame$Species <- factor(as.character(popPlotFrame$Species), levels = c("MeanEpirrita", "MeanOperophtera", "MeanUnknown"), labels = c("Fjellbjørkemåler", "Liten høstmåler", "Ukjent måler"))
-  popPlot <- ggplot(popPlotFrame, aes(x = Year, y = value, colour = Species)) + geom_line() + theme_classic() + xlab("År") + ylab("Antall målerlarver") + theme(legend.title = element_blank())
-  damagePlot <- ggplot(curAgg, aes(x = Year, y = GrazingDamagePercentage)) + geom_line(colour = "blue") + theme_classic() + xlab("År") + ylab("Blader med beiteskade (%)")
-  ggsave(paste(plotLoc, "/populationPlot_", curSite, ".svg", sep = ""), popPlot, width = 6, height = 4)
-  ggsave(paste(plotLoc, "/damagePlot_", curSite, ".svg", sep = ""), damagePlot, width = 5, height = 4)
+  popPlot <- ggplot(popPlotFrame, aes(x = Year, y = value, colour = Species)) + geom_line(size = 0.53) + theme_classic() + xlab("År") + ylab("Antall målerlarver") +
+    # Ensure that break only occur at integer values
+    scale_y_continuous(breaks = function(x) unique(floor(pretty(seq(0, (max(x) + 1) * 1.1))))) +
+    theme(
+      legend.title = element_blank(),
+      text = element_text(family = "Calibri"),
+      axis.text = element_text(size = 9),
+      legend.text = element_text(size = 8),
+      axis.title = element_text(size = 10),
+      axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+    )
+  damagePlot <- ggplot(curAgg, aes(x = Year, y = GrazingDamagePercentage)) + geom_line() + theme_classic() + xlab("År") + ylab("Blader med beiteskade (%)") +
+    scale_y_continuous(limits = c(0, NA)) +
+    theme(
+      legend.title = element_blank(),
+      text = element_text(family = "Calibri"),
+      axis.text = element_text(size = 9),
+      legend.text = element_text(size = 8),
+      axis.title = element_text(size = 10),
+      axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+    )
+  combinedPlot <- ggarrange(popPlot, damagePlot, labels = c("A", "B"), common.legend = TRUE, legend = "right")
+  ggsave(paste(plotLoc, "/populationPlot_", curSite, ".svg", sep = ""), popPlot, width = 5, height = 3)
+  ggsave(paste(plotLoc, "/damagePlot_", curSite, ".svg", sep = ""), damagePlot, width = 4, height = 3)
+  ggsave(paste(plotLoc, "/combinedPlot_", curSite, ".svg", sep = ""), combinedPlot, width = 9, height = 3)
   # Create a worksheet for the current site
   addWorksheet(outBook, curSite)
   writeDataTable(outBook, curSite, curAgg)
 }, stationInfo = stationInfo, plotLoc = outputDirectory, outBook = popBook)
 saveWorkbook(popBook, paste(outputDirectory, "populationSummary.xlsx", sep = "/"), overwrite = TRUE)
+renameSites <- function(curVal, nameSite) {
+  outVal <- as.character(curVal)
+  if(outVal %in% nameSite) {
+    outVal <- names(nameSite)[which(outVal == nameSite)[1]]
+  }
+  outVal
+}
+stationInfo$Site <- factor(sapply(X = stationInfo$Site, FUN = renameSites, nameSite = namesToChange), levels = sapply(X = names(sitesToProcess), FUN = renameSites, nameSite = namesToChange))
+
 hunnraklerPlot <- ggplot(
   aggregate(stationInfo$TotalHunnrakler, by = list(site = stationInfo$Site, year = as.character(stationInfo$Year)), FUN = mean, na.rm = TRUE),
-  aes(x = year, y = x)) + geom_col(aes(fill = site), position = "dodge") + xlab("År") + ylab("Antall hunnrakler") + theme_classic() + theme(legend.title = element_blank())
-ggsave(paste(outputDirectory, "hunnraklerPlot.svg", sep = "/"), hunnraklerPlot, width = 6, height = 4)
+  aes(x = year, y = x)) + geom_col(aes(fill = site), position = "dodge") + xlab("År") + ylab("Antall hunnrakler") + theme_classic() +
+  scale_fill_brewer(palette = "Paired") +
+  theme(
+    legend.title = element_blank(),
+    text = element_text(family = "Calibri"),
+    axis.text = element_text(size = 9),
+    legend.text = element_text(size = 8),
+    axis.title = element_text(size = 10),
+    axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+  )
+ggsave(paste(outputDirectory, "hunnraklerPlot.svg", sep = "/"), hunnraklerPlot, width = 6, height = 3)
 
 # ------ 6. WRITE RESTRUCTURED DATA TO THE OUTPUT DIRECTORY ------
 # Save an RDS file containing all the processed data

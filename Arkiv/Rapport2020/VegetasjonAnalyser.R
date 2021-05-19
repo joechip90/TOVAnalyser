@@ -4,6 +4,12 @@ library(vegan)
 library(ggplot2)
 library(reshape2)
 library(INLA)
+library(extrafont)
+if(!any(names(windowsFonts()) == "Calibri")) {
+  # Import the Calibri font if it is not installed on the system
+  font_import(prompt = FALSE)
+  loadfonts(device = "win")
+}
 
 # ------ 1. SET REPORT GENERATION CRITERIA ------
 # Sites to produce analyses for.  Is a list with names elements, one for each site. Each element is a character vector containing site codes
@@ -26,7 +32,8 @@ speciesAliases <- list(
   "Anthoxanthum_sp" = c("Anthoxanthum_nipponicum", "Anthoxanthum_odoratum_coll"),
   "Cladonia_arbuscula" = c("Cladonia_arbuscula", "Cladonia_arbuscula_ssp_arbuscula"),
   "Sciuro-hypnum_reflexum" = c("Sciuro-hypnum_reflexum", "Brachythecium_reflexum"),
-  "Sciuro-hypnum_starkei" = c("Sciuro-hypnum_starkei", "Brachythecium_starkei")
+  "Sciuro-hypnum_starkei" = c("Sciuro-hypnum_starkei", "Brachythecium_starkei"),
+  "Calamagrostis_phragmitoides" = c("Calamagrostis_purpurea", "Calamagrostis_phragmitoides")
 )
 # Over-ride the sjikt status for some species (they are the wrong sjikt in the database)
 sjiktOverride <- setNames(
@@ -417,10 +424,18 @@ yearlySummaryStats <- function(communityMatrix, siteInfo, speciesInfo, inTag, pl
           )
         }, outMat = outMat, yearsVisited = yearsVisited, speciesInfo = speciesInfo, inTag = inTag, curSiteName = curSiteName, curSjikt = curSjikt))
         # Create the plot in ggplot
-        outPlot <- ggplot(plotFrame, aes(x = year, y = values)) + geom_line(aes(colour = norwegianName)) + labs(x = "År", y = ifelse(inTag == "Freq", "% gjennomsnittlig smårutefrekvens", "% gjennomsnittsdekning")) +
-          theme_classic() + theme(legend.title = element_blank())
+        outPlot <- ggplot(plotFrame, aes(x = year, y = values)) + geom_line(aes(colour = norwegianName), size = 0.53) + labs(x = "År", y = ifelse(inTag == "Freq", "% gjennomsnittlig smårutefrekvens", "% gjennomsnittsdekning")) +
+          theme_classic(base_size = 13) +
+          theme(
+            legend.title = element_blank(),
+            text = element_text(family = "Calibri"),
+            axis.text = element_text(size = 9),
+            legend.text = element_text(size = 8),
+            axis.title = element_text(size = 10),
+            axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+          )
         # Save it as an editable vector
-        ggsave(paste(plotLoc, "_", curSiteName, "_Sjikt", curSjikt, "_", inTag, ".svg", sep = ""), outPlot, width = 7, height = 5)
+        ggsave(paste(plotLoc, "_", curSiteName, "_Sjikt", curSjikt, "_", inTag, ".svg", sep = ""), outPlot, width = 4.5, height = 3.0)
         # Return the frame
         plotFrame
       }, speciesToPlot = speciesToPlot, speciesInfo = speciesInfo, outMat = outMat, yearsVisited = yearsVisited, curSiteName = curSiteName, inTag = inTag, plotLoc = plotLoc))
@@ -573,11 +588,18 @@ createTrajectoryPlot <- function(sjiktInfo, speciesInfo, plotInfo, siteInfo, inT
     }, yearsUsed = yearsUsed, plotCodes = plotCodes, curPlotInfo = curPlotInfo, inTag = inTag, ordType = ordType))
     latestPoints <- curPlotInfo[curPlotInfo$Year == yearsUsed[length(yearsUsed)], paste(inTag, ordType, 1:2, sep = "")]
     # Create a trajectory plot for the plot information
-    ordFigPlot <- ggplot(transFrame) + geom_segment(aes(x = FromOrdOne, y = FromOrdTwo, xend = ToOrdOne, yend = ToOrdTwo, colour = YearTransition)) +
-      geom_point(aes_string(x = paste(inTag, ordType, 1, sep = ""), y = paste(inTag, ordType, 2, sep = "")), data = latestPoints) +
-      theme_classic() + xlab(paste(ordType, "1", sep = " ")) + ylab(paste(ordType, "2", sep = " ")) +
-      scale_colour_manual(values = colorRampPalette(rgb(c(191, 0), c(239, 178), c(255, 238), maxColorValue = 255))(length(yearsUsed) - 1), name = NULL, labels = paste(yearsUsed[1:(length(yearsUsed) - 1)], yearsUsed[2:length(yearsUsed)], sep = "-"))
-    ggsave(paste(plotLoc, "_", curSiteName, ".svg", sep = ""), ordFigPlot, width = 9, height = 7)
+    ordFigPlot <- ggplot(transFrame) + geom_segment(aes(x = FromOrdOne, y = FromOrdTwo, xend = ToOrdOne, yend = ToOrdTwo, colour = YearTransition), size = 0.53) +
+      geom_point(aes_string(x = paste(inTag, ordType, 1, sep = ""), y = paste(inTag, ordType, 2, sep = "")), data = latestPoints, size = 1.76) +
+      theme_classic(base_size = 13) + xlab(paste(ordType, "1", sep = " ")) + ylab(paste(ordType, "2", sep = " ")) +
+      scale_colour_manual(values = colorRampPalette(rgb(c(191, 0), c(239, 178), c(255, 238), maxColorValue = 255))(length(yearsUsed) - 1), name = NULL, labels = paste(yearsUsed[1:(length(yearsUsed) - 1)], yearsUsed[2:length(yearsUsed)], sep = "-")) +
+      theme(
+        text = element_text(family = "Calibri"),
+        axis.text = element_text(size = 9),
+        legend.text = element_text(size = 8),
+        axis.title = element_text(size = 10),
+        axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+      )
+    ggsave(paste(plotLoc, "_", curSiteName, ".svg", sep = ""), ordFigPlot, width = 5.5, height = 4)
     ordFigPlot
   }, speciesInfo = speciesInfo, plotInfo = plotInfo, siteInfo = siteInfo, inTag = inTag, ordType = ordType, plotLoc = plotLoc), as.character(siteInfo$SiteName))
   # Create a species ordination plot
@@ -592,8 +614,15 @@ createTrajectoryPlot <- function(sjiktInfo, speciesInfo, plotInfo, siteInfo, inT
       compositeName = ifelse(is.na(curSpeciesInfo$NameNorsk), as.character(curSpeciesInfo$SpeciesBinomial), as.character(curSpeciesInfo$NameNorsk))
     ))
     ordFigSpecies <- ggplot(curSpeciesInfo, aes_string(x = "originX", y = "originY", xend = paste(inTag, ordType, 1, sep = ""), yend = paste(inTag, ordType, 2, sep = ""), colour = "compositeName")) +
-      geom_segment(arrow = arrow(length = unit(0.01, "npc"), type = "closed")) + theme_classic() + xlab(paste(ordType, "1", sep = " ")) + ylab(paste(ordType, "2", sep = " ")) + theme(legend.title = element_blank())
-    ggsave(paste(plotLoc, "_Sjikt", curSjikt, ".svg", sep = ""), ordFigSpecies, width = 9, height = 7)
+      geom_segment(arrow = arrow(length = unit(0.01, "npc"), type = "closed"), size = 0.53) + theme_classic(base_size = 13) + xlab(paste(ordType, "1", sep = " ")) + ylab(paste(ordType, "2", sep = " ")) + theme(legend.title = element_blank()) +
+      theme(
+        text = element_text(family = "Calibri"),
+        axis.text = element_text(size = 9),
+        legend.text = element_text(size = 8),
+        axis.title = element_text(size = 10),
+        axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+      )
+    ggsave(paste(plotLoc, "_Sjikt", curSjikt, ".svg", sep = ""), ordFigSpecies, width = 7, height = 3.5)
     ordFigSpecies
   }, speciesInfo = speciesInfo), as.character(sjiktInfo$SjiktCode))
   list(plots = ordPlots, species = ordSpecies)
@@ -757,9 +786,16 @@ runEllenbergModel <- function(plotInfo, ellenbergDescriptionNorsk, inTag, plotLo
     violinPlot <- ggplot(exPlotInfo, aes(x = Year, y = Value, fill = EllenbergType)) +
       geom_violin() + stat_summary(aes(y = Prediction), fun.max = uppCred, fun.min = lowCred, geom = "ribbon", alpha = 0.2, fill = "grey", group = 1) +
       stat_summary(aes(y = Prediction), fun = mean, geom = "line", linetype = "longdash", group = 1) + stat_summary(fun = mean, geom = "point", size = 4, colour = "black") +
-      facet_grid(EllenbergType ~ ., scales = "free_y", labeller = labeller(EllenbergType = ellenbergDescriptionNorsk)) + theme_classic() + theme(legend.position = "none", strip.background = element_blank(), strip.text.y = element_text(angle = 90)) +
-      xlab("År") + ylab("Ellenberg Indikator Verdi") + scale_fill_manual(values = attr(ellenbergDescriptionNorsk, "dispColours"))
-    ggsave(paste(plotLoc, "Violin_", curSiteName, "_", inTag, ".svg", sep = ""), violinPlot, width = 5, height = 10)
+      facet_grid(EllenbergType ~ ., scales = "free_y", labeller = labeller(EllenbergType = ellenbergDescriptionNorsk)) + theme_classic(base_size = 13) + theme(legend.position = "none", strip.background = element_blank(), strip.text.y = element_text(angle = 90)) +
+      xlab("År") + ylab("Ellenberg Indikator Verdi") + scale_fill_manual(values = attr(ellenbergDescriptionNorsk, "dispColours")) +
+      theme(
+        text = element_text(family = "Calibri"),
+        axis.text = element_text(size = 9),
+        legend.text = element_text(size = 8),
+        axis.title = element_text(size = 10),
+        axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+      )
+    ggsave(paste(plotLoc, "Violin_", curSiteName, "_", inTag, ".svg", sep = ""), violinPlot, width = 3.75, height = 7.5)
     # Produce the standardised regeression density plots
     marginalYearFrame <- do.call(rbind, lapply(X = names(ellenbergDescriptionNorsk), FUN = function(curEllenbergVal, ellenbergModels, curSiteName) {
       frameOut <- NULL
@@ -793,11 +829,18 @@ runEllenbergModel <- function(plotInfo, ellenbergDescriptionNorsk, inTag, plotLo
     # Create a plot to generate the credible interval
     intervalPlot <- ggplot(marginalYearFrame, aes(ellenbergValue, density)) +
       geom_ribbon(aes(x = ellenbergCredInt, ymax = density, fill = ellenbergType), ymin = 0) + geom_line(group = 1) +
-      geom_vline(xintercept = 0.0, linetype = "longdash") +
-      facet_grid(ellenbergType ~ ., scales = "free_y", labeller = labeller(ellenbergType = ellenbergDescriptionNorsk)) + theme_classic() + theme(legend.position = "none", strip.background = element_blank(), strip.text.y = element_text(angle = 90)) +
+      geom_vline(xintercept = 0.0, linetype = "longdash", size = 0.53) +
+      facet_grid(ellenbergType ~ ., scales = "free_y", labeller = labeller(ellenbergType = ellenbergDescriptionNorsk)) + theme_classic(base_size = 13) + theme(legend.position = "none", strip.background = element_blank(), strip.text.y = element_text(angle = 90)) +
       xlab("Skalert årlig regresjonskoeffisient") + ylab("Tetthet") + scale_fill_manual(values = attr(ellenbergDescriptionNorsk, "dispColours")) +
-      scale_x_continuous(limits = range(marginalYearFrame$ellenbergCredInt, na.rm = TRUE) + 0.1 * c(-1.0, 1.0) * diff(range(marginalYearFrame$ellenbergCredInt, na.rm = TRUE)))
-    ggsave(paste(plotLoc, "Density_", curSiteName, "_", inTag, ".svg", sep = ""), intervalPlot, width = 4, height = 10)
+      scale_x_continuous(limits = range(marginalYearFrame$ellenbergCredInt, na.rm = TRUE) + 0.1 * c(-1.0, 1.0) * diff(range(marginalYearFrame$ellenbergCredInt, na.rm = TRUE))) +
+      theme(
+        text = element_text(family = "Calibri"),
+        axis.text = element_text(size = 9),
+        legend.text = element_text(size = 8),
+        axis.title = element_text(size = 10),
+        axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+      )
+    ggsave(paste(plotLoc, "Density_", curSiteName, "_", inTag, ".svg", sep = ""), intervalPlot, width = 3, height = 7.5)
     list(violin = violinPlot, density = intervalPlot)
   }, ellenbergModels = ellenbergModels, ellenbergFrame = ellenbergFrame, ellenbergDescriptionNorsk = ellenbergDescriptionNorsk, inTag = inTag, plotLoc = plotLoc), sort(unique(as.character(plotInfo$SiteName))))
   list(models = ellenbergModels, plots = ellenbergPlots)
@@ -840,15 +883,22 @@ lapply(X = as.character(siteInfo$SiteName), FUN = function(curSiteName, communit
     outPlots <- setNames(lapply(X = sjiktGroups, FUN = function(curGroup, inFrame, plotLoc, sjiktInfo) {
       curFrame <- as.data.frame(melt(inFrame[as.character(inFrame$Sjikt) %in% sjiktInfo[curGroup, "DescriptionNorsk"], ], "Sjikt"))
       curFrame$variable <- as.numeric(as.character(curFrame$variable))
-      outPlot <- ggplot(curFrame, aes(x = variable, y = value, colour = Sjikt)) + geom_line() + theme_classic() + xlab("År") + ylab(inYLab)
-      ggsave(paste(plotLoc, paste(sort(curGroup), collapse = ""), ".svg", sep = ""), outPlot, width = 7, height = 5)
+      outPlot <- ggplot(curFrame, aes(x = variable, y = value, colour = Sjikt)) + geom_line(size = 0.53) + theme_classic(base_size = 13) + xlab("År") + ylab(inYLab) +
+        theme(
+          text = element_text(family = "Calibri"),
+          axis.text = element_text(size = 9),
+          legend.text = element_text(size = 8),
+          axis.title = element_text(size = 10),
+          axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+        )
+      ggsave(paste(plotLoc, paste(sort(curGroup), collapse = ""), ".svg", sep = ""), outPlot, width = 4.5, height = 3)
       outPlot
     }, inFrame = inFrame, plotLoc = plotLoc, sjiktInfo = sjiktInfo), sapply(X = sjiktGroups, FUN = paste, collapse = "|"))
     outPlots
   }
   richnessPlots <- makeSjiktPlot(richnessFrame, sjiktGroups, paste(plotLoc, "_", curSiteName, "_", "Richness", sep = ""), sjiktInfo, "Antall arter")
-  freqPlots <- makeSjiktPlot(sjiktSummaryFrameFreq, sjiktGroups, paste(plotLoc, "_", curSiteName, "_", "Freq", sep = ""), sjiktInfo, "Gjennomsnitt frekvens (%)")
-  coverPlots <- makeSjiktPlot(sjiktSummaryFrameCover, sjiktGroups, paste(plotLoc, "_", curSiteName, "_", "Cover", sep = ""), sjiktInfo, "Gjennomsnittsdekning (%)")
+  freqPlots <- makeSjiktPlot(sjiktSummaryFrameFreq, sjiktGroups, paste(plotLoc, "_", curSiteName, "_", "Freq", sep = ""), sjiktInfo, "% gjennomsnitt frekvens")
+  coverPlots <- makeSjiktPlot(sjiktSummaryFrameCover, sjiktGroups, paste(plotLoc, "_", curSiteName, "_", "Cover", sep = ""), sjiktInfo, "% gjennomsnittsdekning")
   # Add sheets to the summary workbook
   addWorksheet(richnessBook, paste(curSiteName, "Richness", sep = "_"))
   writeDataTable(richnessBook, paste(curSiteName, "Richness", sep = "_"), richnessFrame)
@@ -923,13 +973,97 @@ allExtraInfo <- lapply(X = row.names(siteInfo), FUN = function(curSite, yearsToP
     nullCountCover <- nullCountCover[order(as.integer(nullCountCover$colName)), ]
     # Create a set of figures for the current information
     freqPlot <- ggplot(curSheetData[curSheetData$Frekvens > 0, ]) + geom_dotplot(aes(x = GjeldendeFloranavnNINA, y = Frekvens, fill = GjeldendeFloranavnNINA), binaxis = "y", stackdir = "center", stackratio = 1.5, dotsize = 0.4) +
-      ylab("Frekvens") + xlab("") + geom_text(aes(x = colName, y = 0.0, label = count, vjust = "top"), data = nullCountFreq) + scale_x_discrete(limits = levels(curSheetData$GjeldendeFloranavnNINA)) +
-      theme_classic() + theme(legend.position = "none", axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+      ylab("Frekvens") + xlab("") + geom_text(aes(x = colName, y = 0.0, label = count, vjust = "centre", hjust = "right"), data = nullCountFreq) + scale_x_discrete(limits = levels(curSheetData$GjeldendeFloranavnNINA)) +
+      theme_classic(base_size = 13) + theme(
+        legend.position = "none",
+        # axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        text = element_text(family = "Calibri"),
+        axis.text = element_text(size = 9),
+        axis.title = element_text(size = 10),
+        axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+      ) + coord_flip()
+    freqPlotBox <- ggplot(curSheetData[curSheetData$Frekvens > 0, ]) + geom_boxplot(aes(x = GjeldendeFloranavnNINA, y = Frekvens, fill = GjeldendeFloranavnNINA)) +
+      ylab("Frekvens") + xlab("") + geom_text(aes(x = colName, y = 0.0, label = count, vjust = "centre", hjust = "right"), data = nullCountFreq) + scale_x_discrete(limits = levels(curSheetData$GjeldendeFloranavnNINA)) +
+      theme_classic(base_size = 13) + theme(
+        legend.position = "none",
+        # axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        text = element_text(family = "Calibri"),
+        axis.text = element_text(size = 9),
+        axis.title = element_text(size = 10),
+        axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+      ) + coord_flip()
     coverPlot <- ggplot(curSheetData[curSheetData$Dekn > 0, ]) + geom_dotplot(aes(x = GjeldendeFloranavnNINA, y = Dekn, fill = GjeldendeFloranavnNINA), binaxis = "y", stackdir = "center", stackratio = 1.5, dotsize = 0.4) +
-      ylab("Dekning") + xlab("") + geom_text(aes(x = colName, y = 0.0, label = count, vjust = "top"), data = nullCountCover) + scale_x_discrete(limits = levels(curSheetData$GjeldendeFloranavnNINA)) +
-      theme_classic() + theme(legend.position = "none", axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
-    ggsave(paste(plotLoc, "Freq_", curEntry[1], "_", curEntry[2], ".svg", sep = ""), freqPlot, width = 6, height = 5)
-    ggsave(paste(plotLoc, "Cover_", curEntry[1], "_", curEntry[2], ".svg", sep = ""), coverPlot, width = 6, height = 5)
+      ylab("Dekning (%)") + xlab("") + geom_text(aes(x = colName, y = 0.0, label = count, vjust = "centre", hjust = "right"), data = nullCountCover) + scale_x_discrete(limits = levels(curSheetData$GjeldendeFloranavnNINA)) +
+      theme_classic(base_size = 13) + theme(
+        legend.position = "none",
+        # axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        text = element_text(family = "Calibri"),
+        axis.text = element_text(size = 9),
+        legend.text = element_text(size = 8),
+        axis.title = element_text(size = 10),
+        axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+      ) + coord_flip()
+    coverPlotBox <- ggplot(curSheetData[curSheetData$Dekn > 0, ]) + geom_boxplot(aes(x = GjeldendeFloranavnNINA, y = Dekn, fill = GjeldendeFloranavnNINA)) +
+      ylab("Dekning (%)") + xlab("") + geom_text(aes(x = colName, y = 0.0, label = count, vjust = "centre", hjust = "right"), data = nullCountCover) + scale_x_discrete(limits = levels(curSheetData$GjeldendeFloranavnNINA)) +
+      theme_classic(base_size = 13) + theme(
+        legend.position = "none",
+        # axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        text = element_text(family = "Calibri"),
+        axis.text = element_text(size = 9),
+        legend.text = element_text(size = 8),
+        axis.title = element_text(size = 10),
+        axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+      ) + coord_flip()
+    ggsave(paste(plotLoc, "Freq_", curEntry[1], "_", curEntry[2], ".svg", sep = ""), freqPlot, width = 7, height = 5)
+    ggsave(paste(plotLoc, "Cover_", curEntry[1], "_", curEntry[2], ".svg", sep = ""), coverPlot, width = 7, height = 5)
+    ggsave(paste(plotLoc, "FreqBox_", curEntry[1], "_", curEntry[2], ".svg", sep = ""), freqPlotBox, width = 7, height = 5)
+    ggsave(paste(plotLoc, "CoverBox_", curEntry[1], "_", curEntry[2], ".svg", sep = ""), coverPlotBox, width = 7, height = 5)
+    tempSheetFreq <- setNames(
+        curSheetData[curSheetData$Frekvens > 0, c("GjeldendeFloranavnNINA", "Frekvens")],
+      c("DmgType", "Count"))
+    tempSheetCover <- setNames(
+      curSheetData[curSheetData$Dekn > 0, c("GjeldendeFloranavnNINA", "Dekn")],
+      c("DmgType", "Count"))
+    tempSheet <- cbind(rbind(tempSheetFreq, tempSheetCover), data.frame(
+      MeasureType = c(
+        rep("Frekvens", nrow(tempSheetFreq)), rep("Dekning (%)", nrow(tempSheetCover))
+      )
+    ))
+    nullCount <- cbind(rbind(nullCountFreq, nullCountCover), data.frame(
+      MeasureType = c(
+        rep("Frekvens", nrow(nullCountFreq)), rep("Dekning (%)", nrow(nullCountCover))
+      )
+    ))
+    combPlot <- ggplot(tempSheet) + geom_dotplot(aes(x = DmgType, y = Count, fill = DmgType), binaxis = "y", stackdir = "center", stackratio = 1.5, dotsize = 0.4) +
+      ylab("") + xlab("") + geom_text(aes(x = colName, y = 0.0, label = count, vjust = "centre", hjust = "right"), data = nullCount) + scale_x_discrete(limits = levels(curSheetData$GjeldendeFloranavnNINA)) +
+      facet_wrap(~ MeasureType, strip.position = "bottom") +
+      theme_classic(base_size = 13) + theme(
+        legend.position = "none",
+        # axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        text = element_text(family = "Calibri"),
+        axis.text = element_text(size = 9),
+        legend.text = element_text(size = 8),
+        axis.title = element_text(size = 10),
+        axis.line = element_line(size = 0.18, colour = grey(level = 0.35)),
+        strip.background = element_blank(),
+        strip.placement = "outside"
+      ) + coord_flip()
+    combPlotBox <- ggplot(tempSheet) + geom_boxplot(aes(x = DmgType, y = Count, fill = DmgType)) +
+      ylab("") + xlab("") + geom_text(aes(x = colName, y = 0.0, label = count, vjust = "centre", hjust = "right"), data = nullCount) + scale_x_discrete(limits = levels(curSheetData$GjeldendeFloranavnNINA)) +
+      facet_wrap(~ MeasureType, strip.position = "bottom") +
+      theme_classic(base_size = 13) + theme(
+        legend.position = "none",
+        # axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        text = element_text(family = "Calibri"),
+        axis.text = element_text(size = 9),
+        legend.text = element_text(size = 8),
+        axis.title = element_text(size = 10),
+        axis.line = element_line(size = 0.18, colour = grey(level = 0.35)),
+        strip.background = element_blank(),
+        strip.placement = "outside"
+      ) + coord_flip()
+    ggsave(paste(plotLoc, "FreqCover_", curEntry[1], "_", curEntry[2], ".svg", sep = ""), combPlot, width = 10, height = 5)
+    ggsave(paste(plotLoc, "FreqCoverBox_", curEntry[1], "_", curEntry[2], ".svg", sep = ""), combPlotBox, width = 10, height = 5)
     as.data.frame(cbind(varMatFreq, varMatCover))
   }, extraInfoLoc = extraInfoLoc, extraAliases = extraAliases, plotLoc = plotLoc)
   # Retrieve the names for all the extra entries in the information file
@@ -1033,12 +1167,26 @@ aggChemInfo <- aggregate(soilChemistryInfo, by = list(
   year = as.integer(gsub("^\\D+\\d+\\-", "", rownames(soilChemistryInfo), perl = TRUE))
 ), FUN = mean, na.rm = TRUE)
 lapply(X = unique(as.character(aggChemInfo$site)), FUN = function(curSite, aggChemInfo, plotLoc) {
-  pHplot <- ggplot(aggChemInfo[as.character(aggChemInfo$site) == curSite & !is.na(aggChemInfo$pH), ], aes(x = year, y = pH)) + geom_line(colour = "blue") + geom_point(colour = "blue") +
-    theme_classic() + xlab("År") + ylab("pH")
-  ggsave(paste(plotLoc, "pH_", curSite, ".svg", sep = ""), pHplot, width = 5, height = 4)
-  LOI_Nplot <- ggplot(aggChemInfo[as.character(aggChemInfo$site) == curSite & !is.na(aggChemInfo$LOI_N), ], aes(x = year, y = LOI_N)) + geom_line(colour = "red") + geom_point(colour = "red") +
-    theme_classic() + xlab("År") + ylab("LOI/Kj-N * 100")
-  ggsave(paste(plotLoc, "LOI_N_", curSite, ".svg", sep = ""), LOI_Nplot, width = 5, height = 4)
+  pHplot <- ggplot(aggChemInfo[as.character(aggChemInfo$site) == curSite & !is.na(aggChemInfo$pH), ], aes(x = year, y = pH)) + geom_line(colour = "blue", size = 0.53) + geom_point(colour = "blue", size = 1.76) +
+    theme_classic(base_size = 13) + xlab("År") + ylab("pH") +
+    theme(
+      text = element_text(family = "Calibri"),
+      axis.text = element_text(size = 9),
+      legend.text = element_text(size = 8),
+      axis.title = element_text(size = 10),
+      axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+    )
+  ggsave(paste(plotLoc, "pH_", curSite, ".svg", sep = ""), pHplot, width = 4, height = 3)
+  LOI_Nplot <- ggplot(aggChemInfo[as.character(aggChemInfo$site) == curSite & !is.na(aggChemInfo$LOI_N), ], aes(x = year, y = LOI_N)) + geom_line(colour = "red", size = 0.53) + geom_point(colour = "red", size = 1.76) +
+    theme_classic(base_size = 13) + xlab("År") + ylab("LOI/Kj-N * 100") +
+    theme(
+      text = element_text(family = "Calibri"),
+      axis.text = element_text(size = 9),
+      legend.text = element_text(size = 8),
+      axis.title = element_text(size = 10),
+      axis.line = element_line(size = 0.18, colour = grey(level = 0.35))
+    )
+  ggsave(paste(plotLoc, "LOI_N_", curSite, ".svg", sep = ""), LOI_Nplot, width = 4, height = 3)
 }, aggChemInfo = aggChemInfo, plotLoc = paste(outputDirectory, "chem_", sep = "/"))
 # Append the chemistry information to the plot information
 plotInfo <- cbind(plotInfo, as.data.frame(matrix(NA, ncol = ncol(soilChemistryInfo), nrow = nrow(plotInfo), dimnames = list(NULL, colnames(soilChemistryInfo)))))
